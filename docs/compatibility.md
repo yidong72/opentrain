@@ -7,7 +7,9 @@ The acceptance target is the **unchanged official W&B Python SDK**, configured w
 | `wandb.init`, config, tags, names, groups, notes | Implemented |
 | Server metadata queries | Both `Query.serverInfo` and `User.serverInfo` return the same metadata; authenticated nested queries during online logging have regression coverage |
 | `wandb.log`, custom steps, summary, finish | Implemented; raw history and numeric metric index |
-| `define_metric` and custom x axes | SDK config is stored; dashboard allows choosing numeric axes |
+| `define_metric` and custom x axes | SDK metric definitions drive Auto axes; explicit overrides, record-identity joins and omitted-axis counts |
+| Public API run deletion | `Run.delete()` and `delete_artifacts=True`, recoverable tombstones, authorized restore and name/alias conflict protection |
+| History repair and recovery | Dry-run-first reversible quarantine; idempotent source/session import batches, partial receipts, readable offline-journal history export; see [recovery details](history-recovery.md) |
 | Resume `must`, `allow`, `never` | Implemented; true SDK continuation tested |
 | Resume `auto` | Standard resume lookup is supported; local ID discovery belongs to the SDK; not separately integration-tested |
 | Checkpoint continuation across different runs | Separate run IDs, shared group, parent/checkpoint config; native `fork_from`/`resume_from` unsupported |
@@ -54,7 +56,7 @@ History is append-only by offset. Retrying identical data does not duplicate it.
 
 The first release intentionally favors inspectable correctness over scale. SQLite supports many independent runs but serializes writes. Some read paths load the run's complete history before paging or sampling. The dashboard compares up to 12 selected runs, with all metric groups accessible through lazy loading and min/max sampling that preserves spikes; full data remains accessible through API pagination. Sidebar pagination and filtering operate on the compact run catalog fetched by the browser. Per-plot zoom changes the viewport of the cached sampled series, not its sampling resolution. TensorBoard watch mode rescans inputs.
 
-Full W&B parity remains the target, **excluding Bayesian sweeps by request**, not a claim about this build. Remaining work includes unimplemented public/admin/registry operations, native run forks/rewinds, offline shared-writer recovery, sweep controls and early termination, full table query semantics, richer visualization, artifact retention, incremental TensorBoard cursors, SQL-level history pagination, and production scaling/security hardening. OAuth credentials must be supplied and live sign-in checked before deploying accounts. The supported version matrix does not imply compatibility with every past or future SDK.
+Full W&B parity remains the target, **excluding Bayesian sweeps by request**, not a claim about this build. Remaining work includes unimplemented public/admin/registry operations, native run forks/rewinds, offline shared-writer recovery, sweep controls and early termination, full table query semantics, richer visualization, artifact retention, incremental TensorBoard cursors, SQL-level GraphQL history pagination (HTTP history pagination is implemented), and production scaling/security hardening. OAuth credentials must be supplied and live sign-in checked before deploying accounts. The supported version matrix does not imply compatibility with every past or future SDK.
 
 Network buffering depends on persistent client storage and retained file/artifact staging paths. Online initialization still needs connectivity. Offline mode cannot query remote resume state, and live sync of uncleanly killed producers needs non-live recovery. See [the client network guide](network-resilience.md) for setup and limits.
 

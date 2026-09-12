@@ -30,6 +30,7 @@ class TBEvent(BaseModel):
     wall_time: float = Field(allow_inf_nan=False)
     values: dict[str, float | None] = Field(default_factory=dict)
     restart: bool = False
+    session: str = Field(default="legacy-default", max_length=256)
 
 
 class TBImport(BaseModel):
@@ -63,6 +64,9 @@ def create_app(data_dir=None, token=None, public_url=None):
     )
     signing_key = accounts.signing_key.encode()
     app.state.accounts = accounts
+    from .recovery import install_recovery
+
+    install_recovery(app, store)
 
     def signature(uid, name, method, expires):
         return hmac.new(
@@ -249,6 +253,8 @@ def create_app(data_dir=None, token=None, public_url=None):
 
     @app.get("/files/{uid}/{name:path}")
     def download(uid: str, name: str):
+        if not name.startswith("artifacts/") and not store.get(uid=uid):
+            raise HTTPException(404, "Run not found")
         if name.startswith("artifacts/"):
             try:
                 artifact = protocol.artifacts.get(name.split("/", 2)[1])
@@ -256,7 +262,11 @@ def create_app(data_dir=None, token=None, public_url=None):
                     raise ValueError("Artifact does not belong to this run")
             except ValueError as error:
                 raise HTTPException(404, str(error)) from error
-        rows = [f for f in store.files(uid) if f["name"] == name]
+        rows = [
+            f
+            for f in store.files(uid, include_deleted=name.startswith("artifacts/"))
+            if f["name"] == name
+        ]
         if not rows:
             lines = store.lines(uid, name)
             if lines:
@@ -332,6 +342,8 @@ def create_app(data_dir=None, token=None, public_url=None):
         return artifact_blob(entity, digest, project, collection, birth)
 
     def run_json(row):
+        from .records import metric_axes
+
         return {
             **row,
             "state": protocol.run(row)["state"],
@@ -342,6 +354,7 @@ def create_app(data_dir=None, token=None, public_url=None):
             },
             "summary": decode(row["summary"]),
             "tags": decode(row["tags"]),
+            "metric_axes": metric_axes(row["config"]),
         }
 
     @app.get("/api/runs")
@@ -410,6 +423,7 @@ def create_app(data_dir=None, token=None, public_url=None):
             raise HTTPException(404, "Run not found")
         return {
             **run_json(row),
+            "ingestion": store.records.imports(uid),
             "keys": store.keys(uid),
             "files": [
                 {**f, "url": file_url(request, uid, f["name"])}
@@ -435,8 +449,7 @@ def create_app(data_dir=None, token=None, public_url=None):
     ):
         if not store.get(uid=uid):
             raise HTTPException(404, "Run not found")
-        rows = store.history(uid)
-        return {"rows": rows[offset : offset + limit], "total": len(rows)}
+        return store.records.rows(uid, offset=offset, limit=limit)
 
     @app.get("/api/runs/{uid}/writers")
     def writers(uid: str):
@@ -504,7 +517,12 @@ def create_app(data_dir=None, token=None, public_url=None):
                     result.setdefault("external_references", []).append(
                         {"name": file["logical_name"], "reference": file["ref"]}
                     )
-            result["producer"] = store.get(uid=artifact["run"])["name"]
+            producer = store.get(uid=artifact["run"], include_deleted=True)
+            result["producer"] = (
+                producer["display_name"] + " (deleted)"
+                if producer["state"] == "deleted"
+                else producer["name"]
+            )
             result["consumers"] = [
                 r["name"] for r in protocol.artifacts.lineage(artifact_id)
             ]

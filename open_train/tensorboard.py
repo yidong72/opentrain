@@ -28,6 +28,7 @@ def event_records(directory):
                         "wall_time": event.wall_time,
                         "values": {},
                         "restart": True,
+                        "session": Path(directory).name,
                     }
                 )
             values = {}
@@ -51,6 +52,7 @@ def event_records(directory):
                         "wall_time": event.wall_time,
                         "values": values,
                         "restart": False,
+                        "session": Path(directory).name,
                     }
                 )
     # Stable chronology handles multiple event files from checkpoint restarts.
@@ -102,6 +104,7 @@ def import_once(
                         if (
                             isinstance(error, httpx.HTTPStatusError)
                             and error.response.status_code < 500
+                            and error.response.status_code not in (408, 429)
                         ):
                             raise
                         if attempt == 3:

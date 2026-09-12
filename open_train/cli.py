@@ -53,6 +53,16 @@ def main():
         action="store_true",
         help="Recover stopped writers, then exit; do not use on live runs",
     )
+    recovery = commands.add_parser(
+        "recover-offline",
+        help="Export readable history from a stopped .wandb journal; never edits or uploads the source",
+    )
+    recovery.add_argument("source")
+    recovery.add_argument(
+        "--output",
+        required=True,
+        help="New private JSONL file; existing files are never overwritten",
+    )
     args = parser.parse_args()
     if args.command == "serve":
         import uvicorn
@@ -60,6 +70,18 @@ def main():
         from .app import create_app
 
         uvicorn.run(create_app(args.data_dir), host=args.host, port=args.port)
+    elif args.command == "recover-offline":
+        from .offline_recovery import recover
+
+        try:
+            receipt = recover(args.source, args.output)
+            print(json.dumps(receipt, indent=2))
+            raise SystemExit(0 if receipt["status"] == "complete" else 2)
+        except (OSError, ValueError, ImportError) as error:
+            parser.exit(
+                1,
+                f"Recovery failed: {type(error).__name__}; verify paths and install the client extra. Source not modified.\n",
+            )
     elif args.command == "sync-watch":
         from .sync import watch
 

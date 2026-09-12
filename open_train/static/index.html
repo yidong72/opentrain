@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260912-plots2" />
-    <script src="/static/metrics.js?v=20260912-plots2" defer></script>
-    <script src="/static/app.js?v=20260912-plots2" defer></script>
-    <script src="/static/account.js?v=20260912-plots2" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260912-history1" />
+    <script src="/static/metrics.js?v=20260912-history1" defer></script>
+    <script src="/static/app.js?v=20260912-history1" defer></script>
+    <script src="/static/account.js?v=20260912-history1" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -161,9 +161,7 @@
             Connect your W&B client or import TensorBoard logs.<br />Your
             metrics, runs, and comparisons will appear live.
           </p>
-          <button class="primary" id="empty-connect">
-            Connect a client ↗
-          </button>
+          <button class="primary" id="empty-connect">Connect a client ↗</button>
         </div>
         <div id="data-view">
           <div class="compare-bar">
@@ -178,7 +176,8 @@
               <label
                 >X axis
                 <select id="x-axis">
-                  <option value="_step">Step</option>
+                  <option value="auto">Auto (metric definition)</option>
+                  <option value="_step">Logging step</option>
                   <option value="_timestamp">Wall time</option>
                   <option value="_runtime">Runtime</option>
                 </select></label

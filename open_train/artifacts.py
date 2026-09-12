@@ -284,7 +284,7 @@ class ArtifactProtocol:
             ).fetchone()
         if not row or (row["state"] == "DELETED" and not include_deleted):
             raise ValueError("Artifact not found")
-        self.store.assert_run(row["run"])
+        self.store.assert_run(row["run"], include_deleted=True)
         if (
             not include_deleted
             and row["ttl"]
@@ -598,7 +598,7 @@ class ArtifactProtocol:
             }
         files = [
             {**f, "logical_name": f["name"][len(prefix) :]}
-            for f in self.store.files(artifact["run"])
+            for f in self.store.files(artifact["run"], include_deleted=True)
             if f["name"].startswith(prefix)
             and f["name"][len(prefix) :] not in manifest_names
         ]
@@ -939,7 +939,7 @@ class ArtifactProtocol:
                     "SELECT run FROM artifact_usage WHERE artifact=?", (uid,)
                 )
             ]
-        return [self.p.run(self.store.get(uid=i)) for i in ids]
+        return [self.p.run(row) for i in ids if (row := self.store.get(uid=i))]
 
     def run_artifacts(self, uid, inputs, first=None, after=None):
         self.store.assert_run(uid)

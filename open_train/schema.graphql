@@ -73,6 +73,7 @@ type MultipartUpload { uploadID: String!, uploadUrlParts: [UploadPart!]! }
 type UploadPart { partNumber: Int!, uploadUrl: String! }
 
 type Mutation {
+  deleteRun(input: DeleteRunInput!): DeleteRunPayload!
   upsertBucket(input: UpsertBucketInput!): UpsertBucketPayload!
   upsertModel(input: UpsertModelInput!): UpsertModelPayload!
   createRunFiles(input: CreateRunFilesInput!): CreateRunFilesPayload!
@@ -96,6 +97,8 @@ type Mutation {
   updateArtifactSequence(input: UpdateArtifactSequenceInput!): UpdateArtifactSequencePayload!
   updateArtifactPortfolio(input: UpdateArtifactPortfolioInput!): UpdateArtifactPortfolioPayload!
 }
+input DeleteRunInput { id: ID!, deleteArtifacts: Boolean, clientMutationId: String }
+type DeleteRunPayload { clientMutationId: String }
 input UpsertBucketInput {
   id: String, name: String, modelName: String, entityName: String, groupName: String,
   description: String, displayName: String, notes: String, commit: String, config: JSONString,

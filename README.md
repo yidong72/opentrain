@@ -1,5 +1,7 @@
 # Open Train
 
+History integrity, custom axes, reversible cleanup, and partial offline recovery are documented in [History recovery](docs/history-recovery.md).
+
 An open-source, self-hosted experiment tracker that accepts the **official `wandb` Python client**. Set `WANDB_BASE_URL` and keep your training instrumentation.
 
 The server includes a live comparison dashboard, durable metrics/config/summary/file storage, checkpoint continuation, TensorBoard scalar import, grid/random sweeps, Google/GitHub accounts, per-user keys, shared-run ingestion, advanced table inspection, and versioned artifacts. Training data stays local; the dashboard needs no CDN. OAuth sign-in connects to the configured identity provider.
@@ -79,7 +81,7 @@ Each event directory becomes a separate run. Multiple event files **in the same 
 
 Imports are idempotent. Use the same `--source` and relative directory layout when moving logs to another machine. Without `--source`, identity includes the absolute input path. Use `--run-id existing-id` to target a particular TensorBoard run; the input must contain exactly one event directory. Do not import into a run concurrently written by the W&B SDK.
 
-TensorBoard `SessionLog.START` markers (including those produced by `SummaryWriter(purge_step=...)`) purge obsolete points at or after the restart step. Overlapping scalar keys/steps use the event with the later wall time. Without a restart marker, old later points are preserved. `--watch` currently rescans event files and sends deduplicated events; use a longer interval for large logs.
+TensorBoard `SessionLog.START` markers (including those produced by `SummaryWriter(purge_step=...)`) supersede obsolete points at or after the restart step. Within the same session/restart epoch, overlapping scalar keys/steps use the later wall time. Different sessions remain distinct; without a restart marker, earlier records are preserved. `--watch` currently rescans event files and sends deduplicated events; use a longer interval for large logs.
 
 ## Continue from a checkpoint
 

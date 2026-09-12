@@ -147,6 +147,8 @@ def analyze(run, workspace):
     directories = sorted({str(Path(f["relative"]).parent) for f in run["files"]})
     for directory in directories:
         records, ignored = event_records(Path(run["local"]) / directory)
+        for record in records:
+            record["session"] = directory
         steps = [e["step"] for e in records if e["values"]]
         sessions.append(
             {
@@ -162,22 +164,28 @@ def analyze(run, workspace):
         skipped += ignored
     events.sort(key=lambda e: (e["wall_time"], not e["restart"], e["step"]))
     metrics = {}
+    epochs, groups = [], {}
     restarts = 0
     for event in events:
         step, timestamp = event["step"], event["wall_time"]
         if event["restart"]:
             restarts += 1
+            epochs.append((step, timestamp))
             metrics = {
                 k: v
                 for k, v in metrics.items()
-                if not (k[1] >= step and v[0] <= timestamp)
+                if not (k[2] >= step and v[0] <= timestamp)
             }
+        epoch = max((t for s, t in epochs if s <= step and t <= timestamp), default=0)
+        group = (event.get("session", "legacy-default"), epoch, step)
+        order = groups.setdefault(group, len(groups))
         for key, value in event["values"].items():
-            # The current server does not index null/non-finite scalar values.
-            if value is not None:
-                metrics[key, step] = (timestamp, value)
+            if not key.startswith("_"):
+                metrics[*group, key] = (timestamp, value, order)
     expected = {}
-    for (key, step), (_, value) in sorted(metrics.items()):
+    for (_, _, step, key), (_, value, _) in sorted(
+        metrics.items(), key=lambda item: (item[0][3], item[0][2], item[1][2])
+    ):
         expected.setdefault(key, []).append([step, value])
     expected_keys = {
         key: {"count": len(points), "last_step": points[-1][0]}
@@ -362,6 +370,14 @@ def import_run(run, args, key, entity):
             if k["stream"] == "history" and not k["key"].startswith("_")
         }
         if actual != run["expected_keys"]:
+            if any(
+                s["source"] == "legacy_tensorboard"
+                for s in detail.get("ingestion", {}).get("sources", [])
+            ):
+                raise RuntimeError(
+                    "Legacy import has collapsed session data; verify a fresh run ID before quarantining/replacing the old import: "
+                    + run["name"]
+                )
             raise RuntimeError("Metric counts or last steps differ for " + run["name"])
         for metric, expected in run["check_series"].items():
             series = request(

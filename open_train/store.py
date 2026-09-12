@@ -51,6 +51,10 @@ class Store:
                     UNIQUE(entity, project, name)
                 );
                 CREATE INDEX IF NOT EXISTS runs_project ON runs(entity, project, updated);
+                CREATE TABLE IF NOT EXISTS deleted_runs (
+                    run TEXT PRIMARY KEY REFERENCES runs(uid), snapshot TEXT NOT NULL,
+                    artifacts TEXT NOT NULL, deleted REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS lines (
                     run TEXT NOT NULL REFERENCES runs(uid), file TEXT NOT NULL,
                     offset INTEGER NOT NULL, content TEXT NOT NULL,
@@ -85,6 +89,9 @@ class Store:
                     assignment TEXT, updated REAL NOT NULL
                 );
             """)
+        from .records import Records
+
+        self.records = Records(self)
 
     @contextmanager
     def connect(self, write=False):
@@ -107,23 +114,41 @@ class Store:
         if self.accounts:
             self.accounts.authorize(entity, write)
 
-    def assert_run(self, uid, write=None):
-        row = self.get(uid=uid, check_access=False)
+    def assert_run(self, uid, write=None, include_deleted=False):
+        row = self.get(uid=uid, check_access=False, include_deleted=include_deleted)
         if not row:
             raise KeyError("Run not found")
         self.authorize(row["entity"], write)
         return row
 
     def get(
-        self, entity=None, project=None, name=None, uid=None, db=None, check_access=True
+        self,
+        entity=None,
+        project=None,
+        name=None,
+        uid=None,
+        db=None,
+        check_access=True,
+        include_deleted=False,
     ):
         if db is None:
             with self.connect() as connection:
-                return self.get(entity, project, name, uid, connection, check_access)
+                return self.get(
+                    entity,
+                    project,
+                    name,
+                    uid,
+                    connection,
+                    check_access,
+                    include_deleted,
+                )
+        query = "SELECT * FROM runs WHERE " + (
+            "uid=?" if uid else "entity=? AND project=? AND name=?"
+        )
+        if not include_deleted:
+            query += " AND uid NOT IN (SELECT run FROM deleted_runs)"
         row = db.execute(
-            "SELECT * FROM runs WHERE uid=?"
-            if uid
-            else "SELECT * FROM runs WHERE entity=? AND project=? AND name=?",
+            query,
             (uid,) if uid else (entity, project, name),
         ).fetchone()
         if check_access and (row or entity):
@@ -186,6 +211,7 @@ class Store:
                     f"INSERT INTO runs ({columns}) VALUES ({placeholders})",
                     tuple(run.values()),
                 )
+                db.execute("INSERT INTO record_migrations VALUES (?)", (run["uid"],))
                 current = principal.get() or {}
                 if self.accounts and current.get("id"):
                     db.execute(
@@ -203,7 +229,7 @@ class Store:
             return run, inserted
 
     def list_runs(self, entity=None, project=None, limit=500, offset=0):
-        where, args = [], []
+        where, args = ["uid NOT IN (SELECT run FROM deleted_runs)"], []
         if entity:
             self.authorize(entity)
         allowed = self.accounts.entities() if self.accounts else None
@@ -227,6 +253,89 @@ class Store:
                     args + [limit, offset],
                 )
             ]
+
+    def delete_run(self, uid, delete_artifacts=False):
+        self.assert_run(uid, True, include_deleted=True)
+        with self.connect(write=True) as db:
+            old = db.execute(
+                "SELECT 1 FROM deleted_runs WHERE run=?", (uid,)
+            ).fetchone()
+            if old:
+                return {"deleted": True, "uid": uid, "recoverable": True}
+            run = self.get(uid=uid, db=db)
+            artifacts = []
+            if (
+                delete_artifacts
+                and db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='artifacts'"
+                ).fetchone()
+            ):
+                for row in db.execute(
+                    "SELECT uid,state FROM artifacts WHERE run=? AND state!='DELETED'",
+                    (uid,),
+                ).fetchall():
+                    aliases = [
+                        dict(r)
+                        for r in db.execute(
+                            "SELECT * FROM artifact_aliases WHERE artifact=?",
+                            (row["uid"],),
+                        )
+                    ]
+                    artifacts.append({**dict(row), "aliases": aliases})
+                    db.execute(
+                        "DELETE FROM artifact_aliases WHERE artifact=?", (row["uid"],)
+                    )
+                    db.execute(
+                        "UPDATE artifacts SET state='DELETED' WHERE uid=?",
+                        (row["uid"],),
+                    )
+            db.execute(
+                "INSERT INTO deleted_runs VALUES (?,?,?,?)",
+                (uid, dumps(run), dumps(artifacts), time.time()),
+            )
+            db.execute(
+                "UPDATE runs SET name=?,state='deleted',updated=? WHERE uid=?",
+                (f"__deleted__{uid}", time.time(), uid),
+            )
+        return {"deleted": True, "uid": uid, "recoverable": True}
+
+    def restore_run(self, uid):
+        self.assert_run(uid, True, include_deleted=True)
+        with self.connect(write=True) as db:
+            deleted = db.execute(
+                "SELECT * FROM deleted_runs WHERE run=?", (uid,)
+            ).fetchone()
+            if not deleted:
+                raise ValueError("Run is not deleted")
+            original = decode(deleted["snapshot"])
+            if db.execute(
+                "SELECT 1 FROM runs WHERE entity=? AND project=? AND name=?",
+                (original["entity"], original["project"], original["name"]),
+            ).fetchone():
+                raise ValueError("Run name has been reused; restore would conflict")
+            for artifact in decode(deleted["artifacts"], []):
+                for alias in artifact["aliases"]:
+                    if db.execute(
+                        "SELECT 1 FROM artifact_aliases WHERE collection=? AND alias=?",
+                        (alias["collection"], alias["alias"]),
+                    ).fetchone():
+                        raise ValueError(
+                            "An artifact alias has been reused; restore would conflict"
+                        )
+                    db.execute(
+                        "INSERT INTO artifact_aliases VALUES (?,?,?)",
+                        (alias["collection"], alias["alias"], alias["artifact"]),
+                    )
+                db.execute(
+                    "UPDATE artifacts SET state=? WHERE uid=?",
+                    (artifact["state"], artifact["uid"]),
+                )
+            db.execute(
+                "UPDATE runs SET name=?,state=?,updated=? WHERE uid=?",
+                (original["name"], original["state"], time.time(), uid),
+            )
+            db.execute("DELETE FROM deleted_runs WHERE run=?", (uid,))
+        return {"restored": True, "uid": uid}
 
     def count(self, uid, file):
         self.assert_run(uid)
@@ -313,6 +422,16 @@ class Store:
                     )
                     if immutable:
                         row = decode(line)
+                        self.records.put(
+                            db,
+                            uid,
+                            "history" if "history" in filename else "system",
+                            f"sdk:{index}",
+                            row,
+                            index,
+                            "sdk",
+                            str(row.get("_writer", "sdk")),
+                        )
                         self.add_metrics(
                             db,
                             uid,
@@ -341,29 +460,7 @@ class Store:
             )
 
     def history(self, uid, stream="history", minimum=None, maximum=None):
-        filename = (
-            "wandb-history.jsonl" if stream == "history" else "wandb-events.jsonl"
-        )
-        rows = [clean(decode(line)) for line in self.lines(uid, filename)]
-        # Imported TensorBoard runs have normalized metrics instead of SDK stream offsets.
-        if not rows:
-            by_step = {}
-            with self.connect() as db:
-                for r in db.execute(
-                    "SELECT * FROM metrics WHERE run=? AND stream=? ORDER BY step",
-                    (uid, stream),
-                ):
-                    row = by_step.setdefault(
-                        r["step"], {"_step": r["step"], "_timestamp": r["timestamp"]}
-                    )
-                    row[r["key"]] = r["value"]
-            rows = list(by_step.values())
-        return [
-            r
-            for r in rows
-            if (minimum is None or r.get("_step", 0) >= minimum)
-            and (maximum is None or r.get("_step", 0) < maximum)
-        ]
+        return self.records.rows(uid, stream, minimum, maximum)["rows"]
 
     def series(
         self,
@@ -374,20 +471,12 @@ class Store:
         x="_step",
         include_timestamps=False,
     ):
-        self.assert_run(uid)
-        with self.connect() as db:
-            if x == "_step":
-                rows = db.execute(
-                    "SELECT step AS x,value,timestamp FROM metrics WHERE run=? AND stream=? AND key=? ORDER BY step",
-                    (uid, stream, key),
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    """SELECT b.value AS x,a.value,a.timestamp FROM metrics a JOIN metrics b
-                    ON a.run=b.run AND a.stream=b.stream AND a.step=b.step
-                    WHERE a.run=? AND a.stream=? AND a.key=? AND b.key=? AND b.value IS NOT NULL ORDER BY b.value""",
-                    (uid, stream, key, x),
-                ).fetchall()
+        run = self.assert_run(uid)
+        from .records import axis_for
+
+        if x == "auto":
+            x = axis_for(run["config"], key)
+        rows, missing_axis = self.records.points(uid, key, stream, x)
         points = [[r["x"], r["value"], r["timestamp"]] for r in rows]
         # Min/max buckets preserve spikes as well as endpoints while bounding response size.
         if len(points) > limit:
@@ -408,24 +497,25 @@ class Store:
             "points": [p[:2] for p in points],
             "total": len(rows),
             "sampled": len(points) < len(rows),
+            "axis": x,
+            "missing_axis": missing_axis,
+            "join": "record_identity",
+            "legacy_projection_points": sum(
+                r["source"] == "legacy_tensorboard" for r in rows
+            ),
+            "axis_warning": "Legacy TensorBoard records were already collapsed by step. Custom axes require matching original value timestamps; unmatched/unknown pairs are omitted."
+            if any(r["source"] == "legacy_tensorboard" for r in rows)
+            else None,
         }
         if include_timestamps:
             result["timestamps"] = [p[2] for p in points]
         return result
 
     def keys(self, uid):
-        self.assert_run(uid)
-        with self.connect() as db:
-            return [
-                dict(r)
-                for r in db.execute(
-                    "SELECT stream,key,COUNT(*) AS count,MAX(step) AS last_step FROM metrics WHERE run=? GROUP BY stream,key ORDER BY key",
-                    (uid,),
-                )
-            ]
+        return self.records.keys(uid)
 
-    def files(self, uid):
-        self.assert_run(uid)
+    def files(self, uid, include_deleted=False):
+        self.assert_run(uid, include_deleted=include_deleted)
         with self.connect() as db:
             return [
                 dict(r)
@@ -486,7 +576,19 @@ class Store:
                 )
             for event in events:
                 # Content identity makes retries safe, including checkpoint reset markers.
-                event_id = hashlib.sha256(dumps(event).encode()).hexdigest()
+                legacy_event = {k: v for k, v in event.items() if k != "session"}
+                legacy_id = hashlib.sha256(dumps(legacy_event).encode()).hexdigest()
+                if db.execute(
+                    "SELECT 1 FROM imports WHERE run=? AND event=?", (uid, legacy_id)
+                ).fetchone():
+                    continue
+                event_id = hashlib.sha256(
+                    dumps(
+                        event
+                        if event.get("session", "legacy-default") != "legacy-default"
+                        else legacy_event
+                    ).encode()
+                ).hexdigest()
                 if not db.execute(
                     "INSERT OR IGNORE INTO imports VALUES (?,?)", (uid, event_id)
                 ).rowcount:
@@ -499,6 +601,10 @@ class Store:
                     )
                     db.execute(
                         "DELETE FROM metrics WHERE run=? AND step>=? AND timestamp<=?",
+                        (uid, step, timestamp),
+                    )
+                    db.execute(
+                        "UPDATE history_records SET superseded=1 WHERE run=? AND source IN ('tensorboard','legacy_tensorboard') AND step>=? AND timestamp<=?",
                         (uid, step, timestamp),
                     )
                 elif db.execute(
@@ -514,15 +620,34 @@ class Store:
                     "history",
                     {**event.get("values", {}), "_step": step, "_timestamp": timestamp},
                 )
+                if event.get("values"):
+                    session = event.get("session", "legacy-default")
+                    epoch = db.execute(
+                        "SELECT COALESCE(MAX(timestamp),0) FROM restart_points WHERE run=? AND step<=? AND timestamp<=?",
+                        (uid, step, timestamp),
+                    ).fetchone()[0]
+                    identity = "tb:" + dumps([session, epoch, step])
+                    self.records.put(
+                        db,
+                        uid,
+                        "history",
+                        identity,
+                        {**event["values"], "_step": step, "_timestamp": timestamp},
+                        step,
+                        "tensorboard",
+                        session,
+                        merge=True,
+                    )
+                    # A new post-restart event replaces a superseded projection
+                    # only within its explicitly identified session/step.
+                    db.execute(
+                        "UPDATE history_records SET superseded=0 WHERE run=? AND stream='history' AND identity=?",
+                        (uid, identity),
+                    )
                 added += 1
-            summary = {}
-            for row in db.execute(
-                "SELECT key,value,step FROM metrics WHERE run=? ORDER BY step", (uid,)
-            ):
-                summary[row["key"]] = row["value"]
-                summary["_step"] = row["step"]
+            self.records.rebuild_summary(db, uid)
             db.execute(
-                "UPDATE runs SET source='tensorboard',summary=?,state='imported',updated=? WHERE uid=?",
-                (dumps(summary), time.time(), uid),
+                "UPDATE runs SET source='tensorboard',state='imported',updated=? WHERE uid=?",
+                (time.time(), uid),
             )
         return added

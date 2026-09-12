@@ -316,6 +316,15 @@ function chart(key, series, axis, expanded = false) {
     ),
   );
   card.append(heading);
+  const missingAxis = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
+  if (missingAxis)
+    card.append(
+      el(
+        "p",
+        `${missingAxis} metric records omitted: missing or unverified ${axis} pairing.`,
+        "muted",
+      ),
+    );
   const controls = el("div", undefined, "plot-controls");
   const smoothingLabel = el("label", "Smoothing ");
   const smoothingInput = el("input");

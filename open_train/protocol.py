@@ -163,6 +163,7 @@ class Protocol:
         self.bind("Run", "files", self.run_files)
         self.bind("Run", "fileCount", lambda r, info: len(self.store.files(r["id"])))
         self.bind("Mutation", "upsertBucket", self.upsert)
+        self.bind("Mutation", "deleteRun", self.delete_run)
         self.bind(
             "Mutation",
             "upsertModel",
@@ -398,6 +399,10 @@ class Protocol:
                 raise ValueError(f"Unsupported run ordering: {order}")
             rows.sort(key=lambda r: r[mapping[key]], reverse=order.startswith("-"))
         return page([self.run(r) for r in rows], first, after)
+
+    def delete_run(self, _, info, input):
+        self.store.delete_run(input["id"], input.get("deleteArtifacts", False))
+        return {"clientMutationId": input.get("clientMutationId")}
 
     def history(self, r, info, samples=None, minStep=None, maxStep=None):
         return [

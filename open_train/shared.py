@@ -82,6 +82,16 @@ class SharedStreams:
                         if "_step" in row:
                             row["_source_step"] = row["_step"]
                         row["_step"], row["_writer"] = global_offset, writer
+                        self.store.records.put(
+                            db,
+                            uid,
+                            "history" if name == "wandb-history.jsonl" else "system",
+                            f"sdk:{global_offset}",
+                            row,
+                            global_offset,
+                            "sdk_shared",
+                            writer,
+                        )
                         self.store.add_metrics(
                             db,
                             uid,

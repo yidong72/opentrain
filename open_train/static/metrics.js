@@ -33,6 +33,24 @@ function sessionForPoint(run, timestamp, sessions = runSessions(run)) {
 function renderSessions(content, run) {
   const sessions = runSessions(run);
   content.append(el("p", `Run ID: ${run.name}`, "muted"));
+  if (run.ingestion) {
+    content.append(el("h3", "Data provenance & recovery"));
+    for (const source of run.ingestion.sources || [])
+      content.append(
+        el(
+          "p",
+          `${source.source} · session ${source.session || "unknown"} · ${source.active_records}/${source.records} active records`,
+        ),
+      );
+    for (const batch of run.ingestion.batches || [])
+      content.append(
+        el(
+          "p",
+          `Batch ${batch.id}: ${batch.status} · ${batch.records}${batch.expected === null ? "" : `/${batch.expected}`} received · ${batch.active_records} active · ${batch.source}`,
+        ),
+      );
+    content.append(el("p", run.ingestion.warning, "muted"));
+  }
   if (!sessions.length) {
     content.append(
       el(
@@ -45,7 +63,7 @@ function renderSessions(content, run) {
   content.append(
     el(
       "p",
-      `${sessions.length} source sessions in one merged run. Overlapping metric/step pairs use the later recorded value. Dashed chart markers indicate session starts, not deleted data.`,
+      `${sessions.length} recorded source sessions. New history preserves separate records across sessions; older TensorBoard imports may already be collapsed by step. Dashed chart markers indicate session starts, not deleted data.`,
       "session-note",
     ),
   );
@@ -223,7 +241,26 @@ async function renderCharts() {
       run,
       ...metricView.cache.get(cacheKey(run, key)),
     }));
-    slot.replaceWith(chart(key, series, axis));
+    const resolved = [
+      ...new Set(
+        series
+          .filter((s) => s.total || s.missing_axis)
+          .map((s) => s.axis || axis),
+      ),
+    ];
+    if (axis === "auto" && resolved.length > 1) {
+      slot.replaceChildren(
+        el("strong", key),
+        el(
+          "p",
+          `Runs define different axes (${resolved.join(", ")}). Select an explicit X axis to compare them.`,
+        ),
+      );
+      return;
+    }
+    slot.replaceWith(
+      chart(key, series, axis === "auto" ? resolved[0] || "_step" : axis),
+    );
   }
   async function load(slots) {
     const missing = slots.filter((slot) =>
