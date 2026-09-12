@@ -1,0 +1,7 @@
+# Copy to cloudflared.yml (gitignored), then replace both placeholders.
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /etc/cloudflared/credentials.json
+ingress:
+  - hostname: opentrain.example.com
+    service: http://open-train:8080
+  - service: http_status:404

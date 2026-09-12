@@ -1,0 +1,15 @@
+.venv
+data
+wandb
+.git
+.pytest_cache
+__pycache__
+test-results
+.env
+.env.*
+secrets
+deploy/cloudflared.yml
+*.pem
+*.key
+dist
+.ruff_cache

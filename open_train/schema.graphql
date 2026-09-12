@@ -1,0 +1,221 @@
+scalar JSONString
+scalar JSON
+scalar Int64
+
+type Query {
+  viewer: User!
+  serverInfo: ServerInfo!
+  model(name: String, entityName: String): Project
+  project(name: String, entityName: String): Project
+  entity(name: String): Entity
+  organization(name: String!): Organization
+  artifact(id: ID!): Artifact
+  artifactCollection(id: ID!): ArtifactCollection
+  clientIDMapping(clientID: ID!): ClientIDMapping
+}
+type User { id: ID!, entity: String!, username: String!, name: String!, email: String!, flags: JSONString!, teams: EntityConnection!, admin: Boolean!, deletedAt: String, apiKeys: ApiKeyConnection! }
+type ApiKey { id: ID!, name: String!, description: String }
+type ApiKeyConnection { edges: [ApiKeyEdge!]! }
+type ApiKeyEdge { node: ApiKey! }
+type Entity { id: ID!, name: String!, isTeam: Boolean!, organization: Organization }
+type Organization { name: String!, featureFlags(rampIDType: RampIDType): [FeatureFlag!]! }
+enum RampIDType { OrgName }
+type FeatureFlag { rampKey: String!, isEnabled: Boolean! }
+type EntityConnection { edges: [EntityEdge!]! }
+type EntityEdge { node: Entity! }
+type ServerInfo { cliVersionInfo: JSONString!, latestLocalVersionInfo: LocalVersion!, features: [Feature!]! }
+type LocalVersion { outOfDate: Boolean!, latestVersionString: String!, versionOnThisInstanceString: String! }
+type Feature { name: String!, isEnabled: Boolean! }
+type Project {
+  id: ID!, internalId: ID!, name: String!, entity: Entity!, readOnly: Boolean!
+  bucket(name: String!, missingOk: Boolean): Run
+  run(name: String!): Run
+  runs(first: Int, after: String, order: String, filters: JSONString): RunConnection!
+  runCount(filters: JSONString): Int!
+  sweep(sweepName: String!): Sweep
+  artifactType(name: String!): ArtifactType
+  artifact(name: String!): Artifact
+  artifactCollection(name: String!): ArtifactCollection
+  artifactCollectionMembership(name: String!): ArtifactCollectionMembership
+  artifactTypes(first: Int, after: String): ArtifactTypeConnection!
+  artifactCollections(first: Int, after: String, filters: JSONString, order: String): ArtifactCollectionConnection!
+}
+type Run {
+  id: ID!, name: String!, displayName: String!, project: Project!, projectId: ID!, state: String!
+  config: JSONString!, summaryMetrics: JSONString!, systemMetrics: JSONString!
+  tags: [String!]!, group: String, jobType: String, notes: String, description: String
+  sweepName: String, commit: String, readOnly: Boolean!, user: User!
+  createdAt: String!, heartbeatAt: String!, updatedAt: String!
+  historyLineCount: Int!, eventsLineCount: Int!, logLineCount: Int!
+  historyTail: JSONString!, eventsTail: JSONString!, wandbConfig(keys: [String!]): JSONString!
+  history(samples: Int, minStep: Int64, maxStep: Int64): [JSONString!]!
+  events(samples: Int): [JSONString!]!
+  sampledHistory(specs: [JSONString!]!): JSON!
+  historyKeys: JSON!, parquetHistory(liveKeys: [String!]!): ParquetHistory!
+  stopped: Boolean!, shouldStop: Boolean!, failed: Boolean!, running: Boolean!, exitcode: Int
+  fileCount: Int!, files(names: [String], first: Int, after: String, pattern: String): FileConnection!
+  outputArtifacts(first: Int, after: String): ArtifactConnection!
+  inputArtifacts(first: Int, after: String): ArtifactConnection!
+}
+type ParquetHistory { parquetUrls: [String!]!, liveData: JSON! }
+type RunConnection { edges: [RunEdge!]!, pageInfo: PageInfo! }
+type RunEdge { node: Run!, cursor: String! }
+type PageInfo { endCursor: String, hasNextPage: Boolean! }
+type FileConnection { edges: [FileEdge!]!, pageInfo: PageInfo!, totalCount: Int! }
+type FileEdge { node: File!, cursor: String! }
+type File {
+  id: ID!, name: String!, url(upload: Boolean): String!, directUrl: String!, uploadUrl: String
+  uploadHeaders: [String!]!, sizeBytes: Int64!, mimetype: String!, updatedAt: String!, md5: String!
+  storagePath: String, artifact: Artifact, uploadMultipartUrls: MultipartUpload
+  displayName: String!, digest: String
+}
+type MultipartUpload { uploadID: String!, uploadUrlParts: [UploadPart!]! }
+type UploadPart { partNumber: Int!, uploadUrl: String! }
+
+type Mutation {
+  upsertBucket(input: UpsertBucketInput!): UpsertBucketPayload!
+  upsertModel(input: UpsertModelInput!): UpsertModelPayload!
+  createRunFiles(input: CreateRunFilesInput!): CreateRunFilesPayload!
+  upsertSweep(input: UpsertSweepInput!): UpsertSweepPayload!
+  createAgent(input: CreateAgentInput!): CreateAgentPayload!
+  agentHeartbeat(input: AgentHeartbeatInput!): AgentHeartbeatPayload!
+  createArtifact(input: CreateArtifactInput!): CreateArtifactPayload!
+  createArtifactManifest(input: CreateArtifactManifestInput!): ArtifactManifestPayload!
+  updateArtifactManifest(input: UpdateArtifactManifestInput!): ArtifactManifestPayload!
+  createArtifactFiles(input: CreateArtifactFilesInput!): CreateArtifactFilesPayload!
+  completeMultipartUploadArtifact(input: CompleteMultipartUploadArtifactInput!): CompleteMultipartUploadArtifactPayload!
+  commitArtifact(input: CommitArtifactInput!): CreateArtifactPayload!
+  useArtifact(input: UseArtifactInput!): CreateArtifactPayload!
+  updateArtifact(input: UpdateArtifactInput!): CreateArtifactPayload!
+  deleteArtifact(input: DeleteArtifactInput!): CreateArtifactPayload!
+  addAliases(input: AddAliasesInput!): SuccessPayload!
+  deleteAliases(input: DeleteAliasesInput!): SuccessPayload!
+  linkArtifact(input: LinkArtifactInput!): LinkArtifactPayload!
+  unlinkArtifact(input: UnlinkArtifactInput!): SuccessPayload!
+  createArtifactType(input: CreateArtifactTypeInput!): CreateArtifactTypePayload!
+  updateArtifactSequence(input: UpdateArtifactSequenceInput!): UpdateArtifactSequencePayload!
+  updateArtifactPortfolio(input: UpdateArtifactPortfolioInput!): UpdateArtifactPortfolioPayload!
+}
+input UpsertBucketInput {
+  id: String, name: String, modelName: String, entityName: String, groupName: String,
+  description: String, displayName: String, notes: String, commit: String, config: JSONString,
+  host: String, debug: Boolean, jobProgram: String, jobRepo: String, jobType: String,
+  state: String, sweep: String, tags: [String!], summaryMetrics: JSONString
+}
+type UpsertBucketPayload { bucket: Run!, inserted: Boolean! }
+input UpsertModelInput { id: String, name: String!, entityName: String!, description: String, repo: String }
+type UpsertModelPayload { project: Project!, model: Project! }
+input CreateRunFilesInput { entityName: String!, projectName: String!, runName: String!, files: [String!]! }
+type CreateRunFilesPayload { runID: ID!, uploadHeaders: [String!]!, files: [File!]! }
+
+input UpsertSweepInput {
+  id: ID, config: String, description: String, entityName: String, projectName: String,
+  controller: JSONString, scheduler: JSONString, state: String, priorRunsFilters: JSONString,
+  displayName: String, launchScheduler: JSONString, templateVariableValues: JSONString
+}
+type Sweep {
+  id: ID!, name: String!, project: Project!, config: String!, method: String!, state: String!
+  description: String, createdAt: String!, heartbeatAt: String!, updatedAt: String!
+  earlyStopJobRunning: Boolean!, bestLoss: Float, controller: JSONString, scheduler: JSONString
+  runs: RunConnection!
+}
+type UpsertSweepPayload { sweep: Sweep!, configValidationWarnings: [String!]! }
+input CreateAgentInput { host: String!, projectName: String, entityName: String, sweep: String! }
+type Agent { id: ID! }
+type CreateAgentPayload { agent: Agent! }
+input AgentHeartbeatInput { id: ID!, metrics: JSONString, runState: JSONString }
+type AgentHeartbeatPayload { agent: Agent!, commands: JSONString! }
+
+enum ArtifactManifestType { FULL PATCH INCREMENTAL }
+enum ArtifactDigestAlgorithm { MANIFEST_MD5 MANIFEST_XXHASH64 }
+enum ArtifactStorageLayout { V1 V2 }
+input ArtifactAliasInput { artifactCollectionName: String, alias: String! }
+input TagInput { name: String, tagName: String, attributes: String, tagCategoryName: String }
+input CreateArtifactInput {
+  aliases: [ArtifactAliasInput!], artifactCollectionName: String, artifactCollectionNames: [String!],
+  artifactTypeName: String, clientID: String, clientMutationId: String, description: String,
+  digest: String!, digestAlgorithm: ArtifactDigestAlgorithm, distributedID: String,
+  enableDigestDeduplication: Boolean, entityName: String!, historyStep: Int64, labels: String,
+  metadata: String, projectName: String!, runName: String, sequenceClientID: String,
+  storageRegion: String, tags: [TagInput!], ttlDurationSeconds: Int64
+}
+input CreateArtifactManifestInput {
+  artifactID: ID!, baseArtifactID: ID, name: String!, digest: String!, entityName: String!,
+  projectName: String!, runName: String!, type: ArtifactManifestType!
+}
+input UpdateArtifactManifestInput { artifactManifestID: ID!, digest: String, baseArtifactID: ID }
+input UploadPartsInput { partNumber: Int!, hexMD5: String! }
+enum CompleteMultipartAction { Complete }
+input CompleteMultipartUploadArtifactInput { completeMultipartAction: CompleteMultipartAction!, completedParts: [UploadPartsInput!]!, artifactID: ID!, storagePath: String!, uploadID: String! }
+type CompleteMultipartUploadArtifactPayload { digest: String! }
+input CreateArtifactFileSpecInput { artifactID: ID!, artifactManifestID: ID, digest: String, md5: String!, mimetype: String, name: String!, uploadPartsInput: [UploadPartsInput!] }
+input CreateArtifactFilesInput { artifactFiles: [CreateArtifactFileSpecInput!]!, clientMutationId: String, cloudRegionID: String, digestAlgorithm: ArtifactDigestAlgorithm, storageLayout: ArtifactStorageLayout }
+input CommitArtifactInput { artifactID: ID! }
+input UseArtifactInput { artifactID: ID!, artifactEntityName: String, artifactProjectName: String, clientMutationId: String, entityName: String!, projectName: String!, runName: String!, usedAs: String }
+type Artifact {
+  id: ID!, state: String!, digest: String!, artifactSequence: ArtifactSequence!, artifactType: ArtifactType!
+  versionIndex: Int!, description: String, metadata: JSONString!, ttlDurationSeconds: Int64,
+  ttlIsInherited: Boolean!, tags: [Tag!]!, historyStep: Int64, size: Int64!, digestAlgorithm: ArtifactDigestAlgorithm!
+  commitHash: String!, fileCount: Int!, createdAt: String!, updatedAt: String!, aliases: [ArtifactAlias!]!
+  currentManifest: ArtifactManifest, files(first: Int, after: String, names: [String!]): FileConnection!
+  filesByManifestEntries(storageLayout: String!, manifestVersion: String!, entries: [ArtifactManifestEntryInput!], storageRegion: String): FileConnection!
+  usedBy: [Run!]!, createdBy: Run, artifactCollections: [ArtifactCollection!]!
+}
+interface ArtifactCollection {
+  id: ID!, name: String!, project: Project!, description: String, createdAt: String!, updatedAt: String!,
+  defaultArtifactType: ArtifactType!, tags: TagConnection!
+  artifactMembership(aliasName: String!): ArtifactCollectionMembership
+  artifacts(first: Int, after: String, order: String, filters: JSONString): ArtifactConnection!
+}
+type ArtifactSequence implements ArtifactCollection {
+  id: ID!, name: String!, project: Project!, description: String, createdAt: String!, updatedAt: String!,
+  defaultArtifactType: ArtifactType!, tags: TagConnection!
+  artifactMembership(aliasName: String!): ArtifactCollectionMembership
+  artifacts(first: Int, after: String, order: String, filters: JSONString): ArtifactConnection!
+  latestArtifact: Artifact, digestAlgorithm: ArtifactDigestAlgorithm!, aliases(first:Int,after:String): ArtifactAliasConnection!
+}
+type ArtifactPortfolio implements ArtifactCollection {
+  id: ID!, name: String!, project: Project!, description: String, createdAt: String!, updatedAt: String!,
+  defaultArtifactType: ArtifactType!, tags: TagConnection!
+  artifactMembership(aliasName: String!): ArtifactCollectionMembership
+  artifacts(first: Int, after: String, order: String, filters: JSONString): ArtifactConnection!
+}
+type ArtifactType {
+  id: ID!, name: String!, description: String, createdAt: String!
+  artifactCollection(name: String!): ArtifactCollection
+  artifactCollections(first: Int, after: String, filters: JSONString, order: String): ArtifactCollectionConnection!
+}
+type ArtifactCollectionMembership { id: ID!, versionIndex: Int!, createdAt: String!, aliases: [ArtifactAlias!]!, artifactCollection: ArtifactCollection!, artifact: Artifact!, files(names:[String!],first:Int,after:String):FileConnection! }
+type ArtifactConnection { edges: [ArtifactEdge!]!, pageInfo: PageInfo!, totalCount: Int! }
+type ArtifactEdge { node: Artifact!, cursor: String!, version: String! }
+type ArtifactCollectionConnection { edges: [ArtifactCollectionEdge!]!, pageInfo: PageInfo!, totalCount: Int! }
+type ArtifactCollectionEdge { node: ArtifactCollection!, cursor: String! }
+type ArtifactTypeConnection { edges: [ArtifactTypeEdge!]!, pageInfo: PageInfo!, totalCount: Int! }
+type ArtifactTypeEdge { node: ArtifactType!, cursor: String! }
+type ArtifactAlias { id: ID!, alias: String!, artifactCollection: ArtifactCollection! }
+type ArtifactAliasConnection { edges: [ArtifactAliasEdge!]!, pageInfo: PageInfo! }
+type ArtifactAliasEdge { node: ArtifactAlias!, cursor: String! }
+type Tag { id: ID!, name: String! }
+type TagConnection { edges: [TagEdge!]! }
+type TagEdge { node: Tag! }
+type ClientIDMapping { serverID: ID! }
+input ArtifactManifestEntryInput { name:String!, digest:String, birthArtifactID:ID, size:Int64, ref:String, extra:JSONString }
+input ArtifactCollectionAliasInput { alias: String!, artifactCollectionName:String!, entityName:String!, projectName:String! }
+input AddAliasesInput { aliases:[ArtifactCollectionAliasInput!]!, artifactID:ID!, clientMutationId:String }
+input DeleteAliasesInput { aliases:[ArtifactCollectionAliasInput!]!, artifactID:ID!, clientMutationId:String }
+input UpdateArtifactInput { artifactID:ID!, aliases:[ArtifactAliasInput!], description:String, metadata:String, labels:String, ttlDurationSeconds:Int64, tagsToAdd:[TagInput!], tagsToDelete:[TagInput!], clientMutationId:String }
+input DeleteArtifactInput { artifactID:ID!, deleteAliases:Boolean, clientMutationId:String }
+input LinkArtifactInput { artifactID:ID, artifactPortfolioID:ID, artifactPortfolioName:String, clientID:ID, entityName:String, projectName:String, aliases:[ArtifactAliasInput!], clientMutationId:String }
+input UnlinkArtifactInput { artifactID:ID!, artifactPortfolioID:ID!, clientMutationId:String }
+input CreateArtifactTypeInput { name:String!, entityName:String!, projectName:String!, description:String }
+input UpdateArtifactSequenceInput { artifactSequenceID:ID!, description:String, name:String, clientMutationId:String }
+input UpdateArtifactPortfolioInput { artifactPortfolioID:ID!, description:String, name:String, clientMutationId:String }
+type SuccessPayload { success:Boolean! }
+type LinkArtifactPayload { versionIndex:Int!, artifactMembership:ArtifactCollectionMembership! }
+type CreateArtifactTypePayload { artifactType:ArtifactType! }
+type UpdateArtifactSequencePayload { artifactSequence:ArtifactSequence! }
+type UpdateArtifactPortfolioPayload { artifactPortfolio:ArtifactPortfolio! }
+type CreateArtifactPayload { artifact: Artifact! }
+type ArtifactManifest { id: ID!, file: File! }
+type ArtifactManifestPayload { artifactManifest: ArtifactManifest! }
+type CreateArtifactFilesPayload { files: FileConnection! }

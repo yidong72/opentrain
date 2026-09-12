@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Open Train · Experiments</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+    <script src="/static/account.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/"
+        ><span class="brand-mark">◒</span> open train<span class="version"
+          >alpha</span
+        ></a
+      >
+      <div class="workspace">
+        <span class="avatar">L</span>
+        <div>Local workspace<small>Self-hosted experiments</small></div>
+      </div>
+      <div class="nav-label">WORKSPACE</div>
+      <button class="nav active" data-view="experiments">
+        <span>▦</span> Experiments <span id="nav-count" class="count">0</span>
+      </button>
+      <button class="nav" data-view="sweeps"><span>⌘</span> Sweeps</button>
+      <button class="nav" data-view="connect">
+        <span>↗</span> Connect a client
+      </button>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span> Your data. Your infrastructure.<small
+          >Open source · Apache 2.0</small
+        >
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div class="breadcrumbs">
+          Workspace <span>/</span> <strong id="breadcrumb">Experiments</strong>
+        </div>
+        <div class="header-actions">
+          <span id="connection" class="connection">Connecting…</span
+          ><button
+            id="refresh"
+            class="icon-button"
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            ↻</button
+          ><button
+            id="auth-button"
+            class="icon-button"
+            title="Set API key"
+            aria-label="Set API key"
+          >
+            ⚿
+          </button>
+        </div>
+      </header>
+      <div id="error" role="alert" hidden></div>
+      <section id="experiments-view" class="view">
+        <div class="title-row">
+          <div>
+            <div class="eyebrow">OBSERVE. COMPARE. ITERATE.</div>
+            <h1>Experiments</h1>
+            <p class="subtitle">A clear view of every training run.</p>
+          </div>
+          <button id="connect" class="primary">+ Connect a client</button>
+        </div>
+        <div class="stats">
+          <article>
+            <span>Total runs</span><strong id="total">0</strong
+            ><small>Across your workspace</small>
+          </article>
+          <article>
+            <span>Active now <i class="status-dot"></i></span
+            ><strong id="active">0</strong><small>Training in progress</small>
+          </article>
+          <article>
+            <span>Completed</span><strong id="completed">0</strong
+            ><small>Finished successfully</small>
+          </article>
+          <article>
+            <span>Projects</span><strong id="projects-count">0</strong
+            ><small>Independent experiments</small>
+          </article>
+        </div>
+        <div class="workspace-toolbar">
+          <div class="tabs">
+            <button class="tab active" data-tab="charts">Overview</button
+            ><button class="tab" data-tab="runs">Runs</button>
+          </div>
+          <div class="filters">
+            <label class="search"
+              >⌕
+              <input
+                id="search"
+                placeholder="Search runs…"
+                aria-label="Search runs" /></label
+            ><select id="project-filter" aria-label="Project">
+              <option value="">All projects</option></select
+            ><select id="state-filter" aria-label="Run status">
+              <option value="">All statuses</option>
+              <option>running</option>
+              <option>finished</option>
+              <option>failed</option>
+              <option>crashed</option>
+              <option>imported</option>
+            </select>
+          </div>
+        </div>
+        <div id="empty" class="empty" hidden>
+          <div class="empty-symbol">⌁</div>
+          <h2>Your next experiment starts here</h2>
+          <p>
+            Connect your W&B client or import TensorBoard logs.<br />Your
+            metrics, runs, and comparisons will appear live.
+          </p>
+          <button class="primary" id="empty-connect">
+            Connect a client ↗
+          </button>
+        </div>
+        <div id="data-view">
+          <div class="compare-bar">
+            <div>
+              <span class="status-dot"></span
+              ><span id="selection-count">0 runs selected</span
+              ><span class="muted">Select runs below to compare</span>
+            </div>
+            <div>
+              <label
+                >X axis
+                <select id="x-axis">
+                  <option value="_step">Step</option>
+                  <option value="_timestamp">Wall time</option>
+                  <option value="_runtime">Runtime</option>
+                </select></label
+              ><label
+                >Smoothing
+                <input
+                  id="smoothing"
+                  type="range"
+                  min="0"
+                  max="0.95"
+                  value="0"
+                  step="0.05"
+                /><output id="smoothing-value">0</output></label
+              >
+            </div>
+          </div>
+          <div id="chart-grid" class="chart-grid"></div>
+          <section class="runs-panel">
+            <div class="panel-heading">
+              <h2>Runs <span id="run-count" class="pill">0</span></h2>
+              <span class="muted">Click a run to inspect details</span>
+            </div>
+            <div class="table-wrap">
+              <table class="runs-table">
+                <thead>
+                  <tr>
+                    <th>
+                      <input
+                        id="select-all"
+                        type="checkbox"
+                        aria-label="Select visible runs"
+                      />
+                    </th>
+                    <th>RUN NAME</th>
+                    <th>STATUS</th>
+                    <th>PROJECT</th>
+                    <th>STEP</th>
+                    <th>SOURCE</th>
+                    <th>UPDATED</th>
+                  </tr>
+                </thead>
+                <tbody id="runs-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+      <section id="sweeps-view" class="view" hidden>
+        <div class="eyebrow">SEARCH YOUR PARAMETER SPACE</div>
+        <h1>Sweeps</h1>
+        <p class="subtitle">
+          Grid and random searches, using the official W&B agent.
+        </p>
+        <div id="sweeps-list"></div>
+      </section>
+      <section id="connect-view" class="view" hidden>
+        <div class="eyebrow">BRING YOUR EXISTING CODE</div>
+        <h1>Connect a client</h1>
+        <p class="subtitle">
+          Point the official W&B Python client at your server.
+        </p>
+        <div class="setup-grid">
+          <article class="setup-card">
+            <span class="pill">01 · W&B client</span>
+            <h2>Keep your training code</h2>
+            <p>Set these environment variables in your training terminal.</p>
+            <pre id="connect-code"></pre>
+            <pre>
+import wandb
+
+with wandb.init(project="my-project") as run:
+    run.log({"loss": 0.42, "accuracy": 0.91})</pre
+            >
+          </article>
+          <article class="setup-card">
+            <span class="pill">02 · TensorBoard</span>
+            <h2>Bring your event logs</h2>
+            <p>
+              Each event directory becomes a run. Repeat imports safely; add
+              <code>--watch</code> to follow training.
+            </p>
+            <pre>
+open-train import-tensorboard ./logs \
+  --project my-project --source experiment-1</pre
+            >
+            <h2>Continue after a checkpoint</h2>
+            <p>
+              Store the run ID with your checkpoint and reuse it on restart.
+            </p>
+            <pre>
+wandb.init(project="my-project",
+           id=checkpoint["wandb_run_id"],
+           resume="must")</pre
+            >
+            <p>
+              Use a custom <code>global_step</code> metric for checkpoint steps
+              that may rewind.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+    <dialog id="detail">
+      <div class="detail-header">
+        <div>
+          <div id="detail-path" class="eyebrow"></div>
+          <h2 id="detail-name"></h2>
+        </div>
+        <button
+          id="close-detail"
+          class="icon-button"
+          aria-label="Close run details"
+        >
+          ×
+        </button>
+      </div>
+      <div class="tabs detail-tabs">
+        <button class="tab active" data-detail="summary">Summary</button
+        ><button class="tab" data-detail="config">Config</button
+        ><button class="tab" data-detail="files">Files & media</button
+        ><button class="tab" data-detail="logs">Logs</button>
+        <button class="tab" data-detail="artifacts">Artifacts</button>
+        <button class="tab" data-detail="writers">Writers</button>
+      </div>
+      <div id="detail-content"></div>
+    </dialog>
+    <dialog id="auth">
+      <form method="dialog">
+        <h2>Connect to Open Train</h2>
+        <div id="oauth-providers" class="dialog-actions"></div>
+        <p>Enter the key configured on this server.</p>
+        <input
+          id="api-key"
+          type="password"
+          autocomplete="off"
+          placeholder="API key"
+          aria-label="API key"
+        />
+        <div class="dialog-actions">
+          <button value="cancel">Cancel</button
+          ><button id="save-key" class="primary" value="save">Connect</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

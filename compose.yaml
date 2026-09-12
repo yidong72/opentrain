@@ -1,0 +1,19 @@
+services:
+  open-train:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      OPEN_TRAIN_API_KEY: ${OPEN_TRAIN_API_KEY:-}
+      OPEN_TRAIN_PUBLIC_URL: ${OPEN_TRAIN_PUBLIC_URL:-http://127.0.0.1:8080}
+      OPEN_TRAIN_AUTH_MODE: ${OPEN_TRAIN_AUTH_MODE:-local}
+      OPEN_TRAIN_GOOGLE_CLIENT_ID: ${OPEN_TRAIN_GOOGLE_CLIENT_ID:-}
+      OPEN_TRAIN_GOOGLE_CLIENT_SECRET: ${OPEN_TRAIN_GOOGLE_CLIENT_SECRET:-}
+      OPEN_TRAIN_GITHUB_CLIENT_ID: ${OPEN_TRAIN_GITHUB_CLIENT_ID:-}
+      OPEN_TRAIN_GITHUB_CLIENT_SECRET: ${OPEN_TRAIN_GITHUB_CLIENT_SECRET:-}
+      OPEN_TRAIN_ADMIN_EMAILS: ${OPEN_TRAIN_ADMIN_EMAILS:-}
+    volumes:
+      - training-data:/data
+    restart: unless-stopped
+volumes:
+  training-data:
