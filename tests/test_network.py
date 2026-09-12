@@ -1,5 +1,7 @@
 """Exercise the real SDK's durable transaction log, not a replacement client."""
 
+import json
+import socket
 import subprocess
 import sys
 import threading
@@ -23,6 +25,7 @@ def eventually(check, timeout=40):
 @pytest.fixture
 def proxy(server):
     down = threading.Event()
+    disconnect = threading.Event()
     lost_ack = threading.Event()
     failures = threading.Event()
 
@@ -34,6 +37,11 @@ def proxy(server):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             if down.is_set():
                 failures.set()
+                if disconnect.is_set():
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.connection.close()
+                    return
                 self.send_error(503, "Simulated outage")
                 return
             response = httpx.request(
@@ -69,12 +77,155 @@ def proxy(server):
     yield {
         "url": f"http://127.0.0.1:{httpd.server_port}",
         "down": down,
+        "disconnect": disconnect,
         "lost_ack": lost_ack,
         "failures": failures,
     }
     httpd.shutdown()
     httpd.server_close()
     worker.join()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("server", ["accounts"], indirect=True)
+@pytest.mark.parametrize("fault", ["503", "disconnect"])
+def test_training_checkpoint_resume_through_outage(server, proxy, tmp_path, fault):
+    """Do real optimization without catching SDK errors in the training process."""
+    name = "training-checkpoint-" + fault
+    env = dict(server["env"], WANDB_BASE_URL=proxy["url"], WANDB_DIR=str(tmp_path))
+    code = r"""
+import json, math, sys, time
+from pathlib import Path
+import wandb
+
+attempt = int(sys.argv[1])
+checkpoint = Path("checkpoint.json")
+state = json.loads(checkpoint.read_text()) if attempt else {"step": 0, "weight": 0., "bias": 0.}
+start = state["step"]
+initial_weight = state["weight"]
+settings = wandb.Settings(init_timeout=20, x_disable_stats=True,
+    x_file_stream_transmit_interval=.1, x_file_stream_retry_wait_min_seconds=.1,
+    x_file_stream_retry_wait_max_seconds=1)
+
+def wait_for(name):
+    deadline = time.monotonic() + 60
+    while not Path(name).exists():
+        assert time.monotonic() < deadline, name
+        time.sleep(.05)
+
+with wandb.init(project="training-integration", id=sys.argv[2],
+                resume="must" if attempt else "never", config={"learning_rate": .1},
+                settings=settings) as run:
+    assert bool(run.resumed) == bool(attempt)
+    assert run.starting_step == start, (run.starting_step, start)
+    wandb.define_metric("train/*", step_metric="train/global_step")
+    for step in range(start, 40 if attempt == 0 else 80):
+        if step == 10:
+            Path("ready").touch()
+            wait_for("continue")
+        # Full-batch gradient descent on y = 3*x + 2; no ML runtime needed.
+        errors = [(x, state["weight"] * x + state["bias"] - (3*x + 2))
+                  for x in (-2., -1., 0., 1., 2.)]
+        loss = sum(error**2 for _, error in errors) / len(errors)
+        assert math.isfinite(loss)
+        state["weight"] -= .1 * 2 * sum(x*error for x, error in errors) / len(errors)
+        state["bias"] -= .1 * 2 * sum(error for _, error in errors) / len(errors)
+        run.log({"train/loss": loss, "train/global_step": step,
+                 "train/weight": state["weight"], "attempt": attempt}, step=step, commit=True)
+        state["step"] = step + 1
+        checkpoint.write_text(json.dumps(state))
+    if not attempt:
+        Path("optimized-during-outage").touch()
+        wait_for("finish")
+    run.summary["checkpoint_step"] = state["step"]
+    run.save(str(checkpoint.resolve()), base_path=str(Path.cwd()), policy="now")
+Path(f"result-{attempt}.json").write_text(json.dumps({
+    "start": start, "end": state["step"], "loss": loss,
+    "initial_weight": initial_weight, "final_weight": state["weight"]}))
+"""
+    headers = {"Authorization": "Bearer " + server["env"]["WANDB_API_KEY"]}
+    with httpx.Client(base_url=server["url"], headers=headers) as client:
+
+        def points():
+            runs = client.get(
+                "/api/runs", params={"project": "training-integration"}
+            ).json()["runs"]
+            run = next((r for r in runs if r["name"] == name), None)
+            if run is None:
+                return []
+            response = client.get(
+                f"/api/runs/{run['uid']}/series",
+                params={"key": "train/loss", "x": "auto"},
+            )
+            response.raise_for_status()
+            series = response.json()
+            # The run is created before asynchronous metric definitions arrive.
+            if series["axis"] != "train/global_step":
+                return []
+            assert series["missing_axis"] == 0
+            return series["points"]
+
+        with (tmp_path / "training.log").open("w+") as output:
+            training = subprocess.Popen(
+                [sys.executable, "-c", code, "0", name],
+                cwd=tmp_path,
+                env=env,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+            )
+            try:
+                eventually(lambda: len(points()) == 10)
+                if fault == "disconnect":
+                    proxy["disconnect"].set()
+                proxy["down"].set()
+                (tmp_path / "continue").touch()
+                eventually(lambda: (tmp_path / "optimized-during-outage").exists())
+                eventually(proxy["failures"].is_set)
+                assert training.poll() is None, (tmp_path / "training.log").read_text()
+                checkpoint = json.loads((tmp_path / "checkpoint.json").read_text())
+                assert checkpoint["step"] == 40
+                assert checkpoint["weight"] == pytest.approx(3.0, abs=1e-6)
+                assert len(points()) == 10  # optimization progressed without delivery
+                assert list(tmp_path.glob("wandb/run-*/*.wandb"))
+                proxy["down"].clear()
+                eventually(lambda: len(points()) == 40)
+                (tmp_path / "finish").touch()
+                training.wait(60)
+                assert training.returncode == 0, (tmp_path / "training.log").read_text()
+            finally:
+                proxy["down"].clear()
+                if training.poll() is None:
+                    training.kill()
+                    training.wait()
+
+        resumed = subprocess.run(
+            [sys.executable, "-c", code, "1", name],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+        first = json.loads((tmp_path / "result-0.json").read_text())
+        second = json.loads((tmp_path / "result-1.json").read_text())
+        assert (first["start"], first["end"], second["start"], second["end"]) == (
+            0,
+            40,
+            40,
+            80,
+        )
+        assert second["initial_weight"] == first["final_weight"]
+        actual = points()
+        assert [p[0] for p in actual] == list(range(80))
+        assert actual[-1][1] < 1e-12
+        assert all(b[1] <= a[1] for a, b in zip(actual, actual[1:], strict=False))
+        runs = client.get(
+            "/api/runs", params={"project": "training-integration"}
+        ).json()["runs"]
+        run = next(r for r in runs if r["name"] == name)
+        assert run["state"] == "finished"
+        assert run["summary"]["checkpoint_step"] == 80
 
 
 def run_points(server, name):

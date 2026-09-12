@@ -135,5 +135,25 @@ delivery, training exit during an outage, sequential fragments and concurrent
 runs, repeat upload, and offline metrics/config/table/image/file/artifact replay.
 These tests do not interrupt production networking.
 
+The checkpoint regression additionally runs real CPU gradient descent in separate
+training/resume processes using account API keys. It injects HTTP 503 responses
+and dropped TCP connections after step 10, verifies optimization reaches a saved
+step-40 checkpoint while delivery is unavailable, then reconnects and resumes to
+step 80. It requires clean process exits, all 80 distinct training steps, the
+configured training axis, decreasing loss, and a finished server run. No SDK
+exceptions are swallowed by the training loop. Run the complete compatibility
+suite with each supported SDK:
+
+```bash
+uv sync --locked
+uv run --with wandb==0.29.0 pytest -q
+uv run --with wandb==0.30.0 pytest -q
+```
+
+This is a small CPU integration workload, not validation of a particular GPU,
+Slurm, or third-party training framework. Passing it does not make online
+initialization or shutdown independent of server availability; offline-first
+mode is still required for that guarantee.
+
 References: [W&B network interruptions](https://docs.wandb.ai/support/models/articles/what-happens-if-internet-connection-is-l),
 [official live sync CLI and crash caveat](https://docs.wandb.ai/models/ref/cli/wandb-beta/wandb-beta-sync).
