@@ -40,6 +40,13 @@ class TBImport(BaseModel):
     events: list[TBEvent] = Field(max_length=5000)
 
 
+class SeriesBatch(BaseModel):
+    runs: list[str] = Field(min_length=1, max_length=12)
+    keys: list[str] = Field(min_length=1, max_length=12)
+    x: str = "_step"
+    limit: int = Field(default=800, ge=10, le=1500)
+
+
 def create_app(data_dir=None, token=None, public_url=None):
     app = FastAPI(title="Open Train", version="0.1.0")
     store = Store(data_dir or os.environ.get("OPEN_TRAIN_DATA_DIR", "data"))
@@ -343,12 +350,58 @@ def create_app(data_dir=None, token=None, public_url=None):
         project: str | None = None,
         limit: int = Query(500, ge=1, le=5000),
         offset: int = Query(0, ge=0),
+        compact: bool = False,
     ):
         rows = store.list_runs(entity, project, limit + 1, offset)
+        result = [run_json(r) for r in rows[:limit]]
+        if compact:
+            for run in result:
+                provenance = run["config"].get("tensorboard_import")
+                sessions = (
+                    provenance.get("sessions") if isinstance(provenance, dict) else None
+                )
+                run["session_count"] = (
+                    len(sessions) if isinstance(sessions, list) else 0
+                )
+                run["has_metrics"] = any(
+                    not key.startswith("_") and isinstance(value, (int, float))
+                    for key, value in run["summary"].items()
+                )
+                run["summary"] = {"_step": run["summary"].get("_step")}
+                run.pop("config")
+                run.pop("notes")
         return {
-            "runs": [run_json(r) for r in rows[:limit]],
+            "runs": result,
             "has_more": len(rows) > limit,
         }
+
+    @app.post("/api/series")
+    def series_batch(body: SeriesBatch):
+        # A POST is used only to bound the query size. It is a read operation:
+        # preserve workspace reader access and authorize every run before returning data.
+        read_token = writing.set(False)
+        try:
+            for uid in body.runs:
+                if not store.get(uid=uid):
+                    raise HTTPException(404, "Run not found")
+            return {
+                "series": {
+                    uid: {
+                        key: store.series(
+                            uid,
+                            key,
+                            "history",
+                            body.limit,
+                            body.x,
+                            include_timestamps=True,
+                        )
+                        for key in dict.fromkeys(body.keys)
+                    }
+                    for uid in dict.fromkeys(body.runs)
+                }
+            }
+        finally:
+            writing.reset(read_token)
 
     @app.get("/api/runs/{uid}")
     def run(uid: str, request: Request):

@@ -9,6 +9,10 @@ const colors = [
   "#a2a35c",
   "#687dcc",
   "#ae8265",
+  "#b95e4d",
+  "#4978a5",
+  "#846b39",
+  "#925981",
 ];
 const runColors = new Map();
 const state = {
@@ -22,6 +26,8 @@ const state = {
   key: sessionStorage.getItem("open-train-key") || "",
   initialized: false,
   loading: false,
+  runPage: 0,
+  pageSize: 20,
 };
 function el(tag, text, cls) {
   const e = document.createElement(tag);
@@ -77,11 +83,17 @@ function age(ts) {
 function visible() {
   const q = $("#search").value.toLowerCase(),
     p = $("#project-filter").value,
-    s = $("#state-filter").value;
+    s = $("#state-filter").value,
+    source = $("#source-filter").value;
   return state.runs.filter(
     (r) =>
       (!p || `${r.entity}/${r.project}` === p) &&
       (!s || r.state === s) &&
+      (!source ||
+        (source === "tensorboard"
+          ? r.source === "tensorboard"
+          : r.source !== "tensorboard")) &&
+      (!$("#selected-filter").checked || state.selected.has(r.uid)) &&
       `${r.display_name} ${r.name} ${r.group_name} ${r.tags.join(" ")}`
         .toLowerCase()
         .includes(q),
@@ -89,6 +101,7 @@ function visible() {
 }
 function switchView(view) {
   state.view = view;
+  $("#run-sidebar").hidden = view !== "experiments";
   for (const name of ["experiments", "sweeps", "connect"])
     $(`#${name}-view`).hidden = name !== view;
   $$(".nav").forEach((b) =>
@@ -113,13 +126,20 @@ async function refresh() {
     const runs = [];
     let offset = 0;
     while (true) {
-      const data = await api(`/api/runs?limit=500&offset=${offset}`);
+      const data = await api(
+        `/api/runs?limit=500&offset=${offset}&compact=true`,
+      );
       runs.push(...data.runs);
       if (!data.has_more) break;
       offset += 500;
     }
+    const changed =
+      JSON.stringify(runs.map((r) => [r.uid, r.updated, r.state])) !==
+      JSON.stringify(state.runs.map((r) => [r.uid, r.updated, r.state]));
     state.runs = runs;
-    state.details.clear();
+    const available = new Set(runs.map((r) => r.uid));
+    for (const uid of state.selected)
+      if (!available.has(uid)) state.selected.delete(uid);
     $("#error").hidden = true;
     $("#connection").textContent = "Live · refreshes every 5s";
     const project = $("#project-filter").value;
@@ -147,10 +167,12 @@ async function refresh() {
           r.project === path[2] &&
           r.name === path[4],
       );
-      const metricRuns = runs.filter((r) =>
-        Object.entries(r.summary).some(
-          ([key, value]) => !key.startsWith("_") && typeof value === "number",
-        ),
+      const metricRuns = runs.filter(
+        (r) =>
+          r.has_metrics ||
+          Object.entries(r.summary).some(
+            ([key, value]) => !key.startsWith("_") && typeof value === "number",
+          ),
       );
       for (const r of target
         ? [target]
@@ -159,7 +181,7 @@ async function refresh() {
       state.initialized = true;
       if (target) openDetail(target.uid);
     }
-    renderRuns();
+    if (changed) renderRuns();
     await renderCharts();
   } catch (e) {
     $("#connection").textContent = "Disconnected";
@@ -169,122 +191,123 @@ async function refresh() {
   }
 }
 function renderRuns() {
-  const rows = visible();
+  const filtered = visible();
+  const pages = Math.max(1, Math.ceil(filtered.length / state.pageSize));
+  state.runPage = Math.min(state.runPage, pages - 1);
+  const start = state.runPage * state.pageSize;
+  const rows = filtered.slice(start, start + state.pageSize);
   $("#empty").hidden = state.runs.length > 0;
   $("#data-view").hidden = !state.runs.length;
-  $("#run-count").textContent = rows.length;
+  $("#run-count").textContent = filtered.length;
+  $("#run-range").textContent = filtered.length
+    ? `${start + 1}–${start + rows.length} of ${filtered.length} runs`
+    : "No matching runs";
+  $("#run-page").textContent = `${state.runPage + 1} / ${pages}`;
+  $("#runs-prev").disabled = state.runPage === 0;
+  $("#runs-next").disabled = state.runPage >= pages - 1;
+  $("#filter-count").textContent =
+    [
+      $("#project-filter").value,
+      $("#state-filter").value,
+      $("#source-filter").value,
+      $("#selected-filter").checked,
+    ].filter(Boolean).length || "";
   $("#runs-body").replaceChildren();
+  if (!rows.length)
+    $("#runs-body").append(
+      el("p", "No runs match these filters.", "run-empty"),
+    );
   for (const r of rows) {
-    const tr = el("tr"),
+    const tr = el("article", undefined, "run-row"),
       check = el("input");
+    tr.setAttribute("role", "listitem");
+    tr.dataset.uid = r.uid;
+    tr.classList.toggle("selected", state.selected.has(r.uid));
     check.type = "checkbox";
     check.checked = state.selected.has(r.uid);
+    check.disabled = !check.checked && state.selected.size >= 12;
     check.setAttribute("aria-label", `Compare ${r.display_name}`);
     check.onchange = () => {
       check.checked ? state.selected.add(r.uid) : state.selected.delete(r.uid);
+      renderRuns();
       renderCharts().catch(showError);
     };
-    const td = el("td");
-    td.append(check);
-    tr.append(td);
-    const name = el("td"),
+    tr.append(check);
+    const name = el("div", undefined, "run-row-content"),
       button = el("button", undefined, "run-name"),
       dot = el("span", undefined, "run-color");
     dot.style.background = color(r.uid);
     button.append(dot, document.createTextNode(r.display_name));
     button.onclick = () => openDetail(r.uid).catch(showError);
+    button.title = r.display_name;
     name.append(button, el("small", r.name, "run-id"));
-    tr.append(name);
-    const status = el("td");
-    status.append(el("span", r.state, `badge ${r.state}`));
-    tr.append(
-      status,
-      el("td", r.project),
-      el("td", format(r.summary._step)),
-      el("td", r.source === "tensorboard" ? "TensorBoard" : "W&B SDK"),
-      el("td", age(r.updated)),
+    if (r.session_count > 1) {
+      const sessions = el(
+        "button",
+        `${r.session_count} sessions`,
+        "session-badge",
+      );
+      sessions.onclick = () => openDetail(r.uid, "sessions").catch(showError);
+      name.append(sessions);
+    }
+    const meta = el("div", undefined, "run-meta");
+    meta.append(
+      el("span", r.state, `badge ${r.state}`),
+      el("span", `Step ${format(r.summary._step)}`),
     );
+    name.append(
+      meta,
+      el(
+        "small",
+        `${r.project} · ${r.source === "tensorboard" ? "TensorBoard" : "W&B SDK"} · ${age(r.updated)}`,
+        "run-meta",
+      ),
+    );
+    tr.append(name);
     $("#runs-body").append(tr);
   }
   $("#select-all").checked =
     rows.length > 0 && rows.every((r) => state.selected.has(r.uid));
   $("#select-all").indeterminate =
     rows.some((r) => state.selected.has(r.uid)) && !$("#select-all").checked;
+  $("#select-all").disabled =
+    !rows.length ||
+    (state.selected.size >= 12 && !rows.some((r) => state.selected.has(r.uid)));
 }
 async function detail(uid) {
-  if (!state.details.has(uid)) state.details.set(uid, api(`/api/runs/${uid}`));
-  return state.details.get(uid);
-}
-async function renderCharts() {
-  const generation = ++state.generation;
-  const selected = visible().filter((r) => state.selected.has(r.uid));
-  $("#selection-count").textContent = `${selected.length} runs selected`;
-  $("#chart-grid").hidden = state.tab !== "charts";
-  if (state.tab !== "charts") return;
-  const container = document.createDocumentFragment();
-  if (!selected.length) {
-    container.append(
-      el("div", "Select runs to compare their metrics.", "chart-placeholder"),
-    );
-    $("#chart-grid").replaceChildren(container);
-    return;
+  const revision = state.runs.find((r) => r.uid === uid)?.updated;
+  let cached = state.details.get(uid);
+  if (!cached || cached.revision !== revision || cached.expires < Date.now()) {
+    cached = { revision, expires: Date.now() + 300000 };
+    cached.promise = api(`/api/runs/${uid}`).catch((error) => {
+      if (state.details.get(uid) === cached) state.details.delete(uid);
+      throw error;
+    });
+    state.details.set(uid, cached);
   }
-  const displayed = selected.slice(0, 12);
-  const details = await Promise.all(displayed.map((r) => detail(r.uid)));
-  const keys = [
-    ...new Set(
-      details.flatMap((d) =>
-        d.keys
-          .filter((k) => k.stream === "history" && !k.key.startsWith("_"))
-          .map((k) => k.key),
-      ),
-    ),
-  ].sort();
-  const axis = $("#x-axis").value;
-  const available = [
-    ...new Set(
-      details.flatMap((d) =>
-        d.keys.filter((k) => k.stream === "history").map((k) => k.key),
-      ),
-    ),
-  ];
-  for (const key of available)
-    if (![...$("#x-axis").options].some((o) => o.value === key))
-      $("#x-axis").add(new Option(key, key));
-  if (!keys.length)
-    container.append(
-      el(
-        "div",
-        "Waiting for scalar metrics. Uploaded tables and media are available in run details.",
-        "chart-placeholder",
-      ),
-    );
-  for (const key of keys.slice(0, 12)) {
-    const series = await Promise.all(
-      displayed.map(async (r) => ({
-        run: r,
-        ...(await api(
-          `/api/runs/${r.uid}/series?key=${encodeURIComponent(key)}&x=${encodeURIComponent(axis)}`,
-        )),
-      })),
-    );
-    if (generation !== state.generation) return;
-    container.append(chart(key, series, axis));
-  }
-  if (keys.length > 12 || selected.length > 12)
-    container.append(
-      el(
-        "p",
-        "Overview displays the first 12 metrics and up to 12 selected runs. Filter runs to narrow the comparison.",
-        "muted",
-      ),
-    );
-  if (generation === state.generation)
-    $("#chart-grid").replaceChildren(container);
+  return cached.promise;
 }
-function chart(key, series, axis) {
+const plotPreferences = new Map();
+let plotClipSequence = 0;
+function plotPreference(key, axis) {
+  if (!plotPreferences.has(key)) {
+    let smoothing = 0;
+    try {
+      const saved = Number(localStorage.getItem(`open-train-smoothing:${key}`));
+      if (Number.isFinite(saved))
+        smoothing = Math.max(0, Math.min(0.95, saved));
+    } catch {
+      /* Preferences are optional when browser storage is unavailable. */
+    }
+    plotPreferences.set(key, { smoothing, domains: new Map() });
+  }
+  return plotPreferences.get(key);
+}
+function chart(key, series, axis, expanded = false) {
+  const preference = plotPreference(key, axis);
   const card = el("article", undefined, "chart"),
     heading = el("div", undefined, "chart-heading");
+  card.dataset.metric = key;
   heading.append(
     el("span", key),
     el(
@@ -293,169 +316,499 @@ function chart(key, series, axis) {
     ),
   );
   card.append(heading);
-  const w = 530,
-    h = 235,
-    pad = { l: 47, r: 15, t: 10, b: 34 };
-  let points = series.flatMap((s) => s.points).filter((p) => p[1] !== null);
-  if (!points.length) {
-    card.append(el("div", "No values for this axis.", "chart-placeholder"));
-    return card;
+  const controls = el("div", undefined, "plot-controls");
+  const smoothingLabel = el("label", "Smoothing ");
+  const smoothingInput = el("input");
+  smoothingInput.type = "range";
+  smoothingInput.min = "0";
+  smoothingInput.max = ".95";
+  smoothingInput.step = ".05";
+  smoothingInput.value = preference.smoothing;
+  smoothingInput.className = "plot-smoothing";
+  smoothingInput.setAttribute("aria-label", `Smoothing for ${key}`);
+  const smoothingValue = el("output", String(preference.smoothing));
+  smoothingLabel.append(smoothingInput, smoothingValue);
+  controls.append(smoothingLabel);
+  function action(label, text, cls) {
+    const button = el("button", text, cls);
+    button.title = label;
+    button.setAttribute("aria-label", `${label}: ${key}`);
+    controls.append(button);
+    return button;
   }
-  let xmin = Infinity,
-    xmax = -Infinity,
-    ymin = Infinity,
-    ymax = -Infinity;
-  for (const [x, y] of points) {
-    xmin = Math.min(xmin, x);
-    xmax = Math.max(xmax, x);
-    ymin = Math.min(ymin, y);
-    ymax = Math.max(ymax, y);
-  }
-  if (xmin === xmax) xmax = xmin + 1;
-  let yrange = ymax - ymin || Math.max(Math.abs(ymax) * 0.1, 0.1);
-  ymin -= yrange * 0.08;
-  ymax += yrange * 0.08;
-  const X = (x) => pad.l + ((x - xmin) / (xmax - xmin)) * (w - pad.l - pad.r),
-    Y = (y) => h - pad.b - ((y - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
-  const ns = "http://www.w3.org/2000/svg",
-    svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  svg.setAttribute("role", "img");
-  svg.setAttribute(
-    "aria-label",
-    `${key} by ${axis} across ${series.length} runs`,
-  );
-  function node(tag, attrs, text) {
-    const n = document.createElementNS(ns, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (text !== undefined) n.textContent = text;
-    svg.append(n);
-    return n;
-  }
-  for (let i = 0; i <= 4; i++) {
-    const y = ymin + ((ymax - ymin) * i) / 4;
-    node("line", {
-      x1: pad.l,
-      y1: Y(y),
-      x2: w - pad.r,
-      y2: Y(y),
-      stroke: "#edf1ee",
-      "stroke-dasharray": "3 3",
-    });
-    node(
-      "text",
-      {
-        x: pad.l - 9,
-        y: Y(y) + 3,
-        "text-anchor": "end",
-        fill: "#a2aea6",
-        "font-size": 9,
-      },
-      format(y),
-    );
-    const x = xmin + ((xmax - xmin) * i) / 4;
-    node(
-      "text",
-      {
-        x: X(x),
-        y: h - 14,
-        "text-anchor": "middle",
-        fill: "#a2aea6",
-        "font-size": 9,
-      },
-      axis === "_timestamp"
-        ? new Date(x * 1000).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : format(x),
-    );
-  }
-  const smoothing = Number($("#smoothing").value);
-  for (const s of series) {
-    let last = null,
-      pen = false,
-      d = "";
-    for (const [x, y] of s.points) {
-      if (y === null) {
-        pen = false;
-        last = null;
-        continue;
-      }
-      let sy = last === null ? y : last * smoothing + y * (1 - smoothing);
-      last = sy;
-      d += `${pen ? "L" : "M"}${X(x).toFixed(2)},${Y(sy).toFixed(2)} `;
-      pen = true;
-    }
-    node("path", {
-      d,
-      fill: "none",
-      stroke: color(s.run.uid),
-      "stroke-width": 2,
-      "stroke-linejoin": "round",
-      "stroke-linecap": "round",
-    });
-    if (s.points.length === 1 && s.points[0][1] !== null)
-      node("circle", {
-        cx: X(s.points[0][0]),
-        cy: Y(s.points[0][1]),
-        r: 3,
-        fill: color(s.run.uid),
+  const zoomIn = action("Zoom in", "+", "plot-zoom-in");
+  const zoomOut = action("Zoom out", "−", "plot-zoom-out");
+  const reset = action("Reset zoom", "Reset", "plot-reset");
+  if (!expanded) {
+    action("Maximize plot", "⛶", "plot-maximize").onclick = () => {
+      const dialog = el("dialog", undefined, "plot-dialog");
+      dialog.setAttribute("aria-label", `${key} expanded plot`);
+      const header = el("div", undefined, "detail-header");
+      const close = el("button", "×", "icon-button");
+      close.setAttribute("aria-label", "Close expanded plot");
+      close.onclick = () => dialog.close();
+      header.append(el("h2", key), close);
+      dialog.append(header, chart(key, series, axis, true));
+      dialog.addEventListener("close", () => {
+        // A refresh already in flight may have replaced the original card.
+        $$("#chart-grid .chart")
+          .find((c) => c.dataset.metric === key)
+          ?.redraw?.();
+        dialog.remove();
       });
+      document.body.append(dialog);
+      dialog.showModal();
+      close.focus();
+    };
   }
-  card.append(svg);
-  const legend = el("div", undefined, "chart-legend");
-  for (const s of series) {
-    const item = el("span", undefined, "legend-item"),
-      line = el("i", undefined, "legend-line");
-    line.style.background = color(s.run.uid);
-    item.title = s.run.display_name;
-    item.append(line, document.createTextNode(s.run.display_name));
-    legend.append(item);
-  }
-  card.append(legend);
-  const tooltip = el("div", undefined, "tooltip");
-  tooltip.hidden = true;
-  card.append(tooltip);
-  svg.onpointermove = (e) => {
-    const rect = svg.getBoundingClientRect(),
-      x =
-        xmin +
-        ((((e.clientX - rect.left) / rect.width) * w - pad.l) /
-          (w - pad.l - pad.r)) *
-          (xmax - xmin);
-    const text = [];
-    for (const s of series) {
-      let best;
-      for (const p of s.points)
-        if (!best || Math.abs(p[0] - x) < Math.abs(best[0] - x)) best = p;
-      if (best)
-        text.push(
-          `${s.run.display_name}: ${format(best[1])} · ${format(best[0])}`,
-        );
+  card.append(controls);
+  const body = el("div", undefined, "plot-body");
+  card.append(body);
+  smoothingInput.oninput = () => {
+    preference.smoothing = Number(smoothingInput.value);
+    smoothingValue.value = smoothingInput.value;
+    try {
+      localStorage.setItem(`open-train-smoothing:${key}`, smoothingInput.value);
+    } catch {
+      /* Optional preference. */
     }
-    tooltip.textContent = text.join("\n");
-    tooltip.hidden = false;
-    tooltip.style.left = `${Math.max(0, Math.min(e.clientX - card.getBoundingClientRect().left + 12, card.clientWidth - 220))}px`;
-    tooltip.style.top = `${e.clientY - card.getBoundingClientRect().top + 12}px`;
+    draw();
   };
-  svg.onpointerleave = () => (tooltip.hidden = true);
+  card.redraw = () => {
+    smoothingInput.value = preference.smoothing;
+    smoothingValue.value = preference.smoothing;
+    draw();
+  };
+  function draw() {
+    const restoreFocus = document.activeElement === $("svg", body);
+    body.replaceChildren();
+    const w = expanded ? 1000 : 530,
+      h = expanded ? 520 : 235,
+      pad = { l: 47, r: 15, t: 10, b: 34 };
+    let points = series.flatMap((s) => s.points).filter((p) => p[1] !== null);
+    if (!points.length) {
+      body.append(el("div", "No values for this axis.", "chart-placeholder"));
+      zoomIn.disabled = zoomOut.disabled = reset.disabled = true;
+      return;
+    }
+    let xmin = Infinity,
+      xmax = -Infinity,
+      ymin = Infinity,
+      ymax = -Infinity;
+    for (const [x, y] of points) {
+      xmin = Math.min(xmin, x);
+      xmax = Math.max(xmax, x);
+      ymin = Math.min(ymin, y);
+      ymax = Math.max(ymax, y);
+    }
+    if (xmin === xmax) xmax = xmin + 1;
+    let yrange = ymax - ymin || Math.max(Math.abs(ymax) * 0.1, 0.1);
+    ymin -= yrange * 0.08;
+    ymax += yrange * 0.08;
+    const full = [xmin, xmax, ymin, ymax];
+    const domain = preference.domains.get(axis);
+    if (domain) [xmin, xmax, ymin, ymax] = domain;
+    card.dataset.domain = JSON.stringify([xmin, xmax, ymin, ymax]);
+    reset.disabled = zoomOut.disabled = !domain;
+    function setDomain(next) {
+      if (next.every((v, i) => Math.abs(v - full[i]) < 1e-10))
+        preference.domains.delete(axis);
+      else preference.domains.set(axis, next);
+      draw();
+    }
+    function zoom(factor, cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2) {
+      const next = [
+        cx + (xmin - cx) * factor,
+        cx + (xmax - cx) * factor,
+        cy + (ymin - cy) * factor,
+        cy + (ymax - cy) * factor,
+      ];
+      for (const i of [0, 2]) {
+        const span = next[i + 1] - next[i];
+        if (span >= full[i + 1] - full[i])
+          [next[i], next[i + 1]] = [full[i], full[i + 1]];
+        else {
+          next[i] = Math.max(full[i], Math.min(next[i], full[i + 1] - span));
+          next[i + 1] = next[i] + span;
+        }
+      }
+      if (
+        next[1] - next[0] > Math.max(1e-12, Math.abs(cx) * 1e-13) &&
+        next[3] - next[2] > Math.max(1e-12, Math.abs(cy) * 1e-13)
+      )
+        setDomain(next);
+    }
+    zoomIn.onclick = () => zoom(0.5);
+    zoomOut.onclick = () => zoom(2);
+    reset.onclick = () => {
+      preference.domains.delete(axis);
+      draw();
+    };
+    const X = (x) => pad.l + ((x - xmin) / (xmax - xmin)) * (w - pad.l - pad.r),
+      Y = (y) => h - pad.b - ((y - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
+    const ns = "http://www.w3.org/2000/svg",
+      svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("role", "img");
+    svg.setAttribute(
+      "aria-label",
+      `${key} by ${axis} across ${series.length} runs`,
+    );
+    function node(tag, attrs, text) {
+      const n = document.createElementNS(ns, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (text !== undefined) n.textContent = text;
+      svg.append(n);
+      return n;
+    }
+    const clipID = `plot-clip-${++plotClipSequence}`;
+    const clip = node("clipPath", { id: clipID });
+    const clipRect = document.createElementNS(ns, "rect");
+    for (const [k, v] of Object.entries({
+      x: pad.l,
+      y: pad.t,
+      width: w - pad.l - pad.r,
+      height: h - pad.t - pad.b,
+    }))
+      clipRect.setAttribute(k, v);
+    clip.append(clipRect);
+    for (let i = 0; i <= 4; i++) {
+      const y = ymin + ((ymax - ymin) * i) / 4;
+      node("line", {
+        x1: pad.l,
+        y1: Y(y),
+        x2: w - pad.r,
+        y2: Y(y),
+        stroke: "#edf1ee",
+        "stroke-dasharray": "3 3",
+      });
+      node(
+        "text",
+        {
+          x: pad.l - 9,
+          y: Y(y) + 3,
+          "text-anchor": "end",
+          fill: "#a2aea6",
+          "font-size": 9,
+        },
+        format(y),
+      );
+      const x = xmin + ((xmax - xmin) * i) / 4;
+      node(
+        "text",
+        {
+          x: X(x),
+          y: h - 14,
+          "text-anchor": "middle",
+          fill: "#a2aea6",
+          "font-size": 9,
+        },
+        axis === "_timestamp"
+          ? new Date(x * 1000).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : format(x),
+      );
+    }
+    const smoothing = preference.smoothing;
+    const drawn = [];
+    if ($("#show-sessions").checked && ["_step", "_timestamp"].includes(axis)) {
+      for (const s of series) {
+        const starts = new Map();
+        for (const session of runSessions(s.run).slice(1)) {
+          const x =
+            axis === "_step" ? session.first_step : session.first_wall_time;
+          if (!Number.isFinite(x) || x < xmin || x > xmax) continue;
+          if (!starts.has(x)) starts.set(x, []);
+          starts.get(x).push(session.label);
+        }
+        for (const [x, labels] of starts) {
+          const marker = node("line", {
+            x1: X(x),
+            x2: X(x),
+            y1: pad.t,
+            y2: h - pad.b,
+            stroke: color(s.run.uid),
+            "stroke-dasharray": "3 5",
+            opacity: 0.4,
+            class: "session-start",
+            "pointer-events": "none",
+          });
+          const title = document.createElementNS(ns, "title");
+          title.textContent = `${s.run.display_name} · ${labels.join(", ")} start at ${format(x)}`;
+          marker.append(title);
+          node(
+            "text",
+            {
+              x: X(x) + 3,
+              y: pad.t + 10 + series.indexOf(s) * 11,
+              fill: color(s.run.uid),
+              "font-size": 9,
+              "pointer-events": "none",
+            },
+            labels.join("/"),
+          );
+        }
+      }
+    }
+    for (const s of series) {
+      let last = null,
+        pen = false,
+        d = "",
+        previousSession = null;
+      const plotted = [];
+      const sessions = runSessions(s.run);
+      function flush() {
+        if (!d) return;
+        node("path", {
+          d,
+          fill: "none",
+          stroke: color(s.run.uid),
+          "stroke-width": 2,
+          "stroke-linejoin": "round",
+          "stroke-linecap": "round",
+          class: "metric-line",
+          "clip-path": `url(#${clipID})`,
+          "stroke-dasharray":
+            previousSession && previousSession.index % 2 ? "6 3" : "none",
+        });
+        d = "";
+      }
+      for (let index = 0; index < s.points.length; index++) {
+        const [x, y] = s.points[index];
+        if (y === null) {
+          pen = false;
+          last = null;
+          continue;
+        }
+        let sy = last === null ? y : last * smoothing + y * (1 - smoothing);
+        last = sy;
+        const session = sessionForPoint(s.run, s.timestamps?.[index], sessions);
+        if (session?.label !== previousSession?.label && pen) {
+          flush();
+          const before = plotted[plotted.length - 1];
+          d = `M${X(before.x).toFixed(2)},${Y(before.y).toFixed(2)} `;
+        }
+        previousSession = session;
+        d += `${pen ? "L" : "M"}${X(x).toFixed(2)},${Y(sy).toFixed(2)} `;
+        pen = true;
+        plotted.push({ x, y: sy, raw: y, session });
+      }
+      flush();
+      drawn.push({ run: s.run, points: plotted });
+      if (s.points.length === 1 && s.points[0][1] !== null)
+        node("circle", {
+          cx: X(s.points[0][0]),
+          cy: Y(s.points[0][1]),
+          r: 3,
+          fill: color(s.run.uid),
+          "clip-path": `url(#${clipID})`,
+        });
+    }
+    body.append(svg);
+    svg.style.touchAction = "none";
+    svg.setAttribute("tabindex", "0");
+    svg.setAttribute(
+      "aria-label",
+      `${key} by ${axis}. Drag a rectangle to zoom. Use plus, minus, or zero keys to zoom and reset.`,
+    );
+    const legend = el("div", undefined, "chart-legend");
+    for (const s of series) {
+      const item = el("span", undefined, "legend-item"),
+        line = el("i", undefined, "legend-line");
+      line.style.background = color(s.run.uid);
+      item.title = s.run.display_name;
+      item.append(line, document.createTextNode(s.run.display_name));
+      legend.append(item);
+    }
+    body.append(legend);
+    body.append(
+      el(
+        "small",
+        "Drag to zoom · Ctrl/⌘ + scroll to zoom · double-click to reset",
+        "plot-hint",
+      ),
+    );
+    const tooltip = el("div", undefined, "tooltip");
+    tooltip.hidden = true;
+    body.append(tooltip);
+    const guide = node("line", {
+      y1: pad.t,
+      y2: h - pad.b,
+      stroke: "#536c60",
+      "stroke-dasharray": "3 3",
+      visibility: "hidden",
+      class: "hover-guide",
+      "pointer-events": "none",
+    });
+    const markers = drawn.map((s) =>
+      node("circle", {
+        r: 5,
+        fill: color(s.run.uid),
+        stroke: "white",
+        "stroke-width": 2,
+        visibility: "hidden",
+        class: "hover-point",
+        "pointer-events": "none",
+        "clip-path": `url(#${clipID})`,
+      }),
+    );
+    function coordinates(e) {
+      const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(
+        svg.getScreenCTM().inverse(),
+      );
+      return {
+        x: Math.max(pad.l, Math.min(w - pad.r, p.x)),
+        y: Math.max(pad.t, Math.min(h - pad.b, p.y)),
+      };
+    }
+    const unX = (x) =>
+      xmin + ((x - pad.l) / (w - pad.l - pad.r)) * (xmax - xmin);
+    const unY = (y) =>
+      ymax - ((y - pad.t) / (h - pad.t - pad.b)) * (ymax - ymin);
+    let drag = null;
+    const brush = node("rect", {
+      class: "zoom-brush",
+      fill: "#167b6226",
+      stroke: "#167b62",
+      visibility: "hidden",
+      "pointer-events": "none",
+    });
+    svg.onpointerdown = (e) => {
+      if (e.button !== 0) return;
+      drag = coordinates(e);
+      svg.setPointerCapture(e.pointerId);
+      svg.onpointerleave();
+      e.preventDefault();
+    };
+    svg.onpointerup = (e) => {
+      if (!drag) return;
+      const start = drag,
+        end = coordinates(e);
+      drag = null;
+      brush.setAttribute("visibility", "hidden");
+      if (svg.hasPointerCapture(e.pointerId))
+        svg.releasePointerCapture(e.pointerId);
+      if (Math.abs(start.x - end.x) > 8 && Math.abs(start.y - end.y) > 8)
+        setDomain([
+          unX(Math.min(start.x, end.x)),
+          unX(Math.max(start.x, end.x)),
+          unY(Math.max(start.y, end.y)),
+          unY(Math.min(start.y, end.y)),
+        ]);
+    };
+    svg.onpointercancel = () => {
+      drag = null;
+      brush.setAttribute("visibility", "hidden");
+    };
+    svg.ondblclick = () => reset.onclick();
+    svg.onkeydown = (e) => {
+      if (["+", "=", "-", "0"].includes(e.key)) {
+        e.preventDefault();
+        if (e.key === "0") reset.onclick();
+        else zoom(e.key === "-" ? 2 : 0.5);
+      }
+    };
+    svg.addEventListener(
+      "wheel",
+      (e) => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        const p = coordinates(e);
+        zoom(e.deltaY > 0 ? 1.25 : 0.8, unX(p.x), unY(p.y));
+      },
+      { passive: false },
+    );
+    svg.onpointermove = (e) => {
+      const p = coordinates(e),
+        x = unX(p.x);
+      if (drag) {
+        for (const [k, v] of Object.entries({
+          x: Math.min(drag.x, p.x),
+          y: Math.min(drag.y, p.y),
+          width: Math.abs(drag.x - p.x),
+          height: Math.abs(drag.y - p.y),
+          visibility: "visible",
+        }))
+          brush.setAttribute(k, v);
+        return;
+      }
+      const text = [];
+      const clamped = Math.max(xmin, Math.min(xmax, x));
+      guide.setAttribute("x1", X(clamped));
+      guide.setAttribute("x2", X(clamped));
+      guide.setAttribute("visibility", "visible");
+      for (const [index, s] of drawn.entries()) {
+        // Binary search keeps hover work logarithmic in the number of plotted points.
+        let lo = 0,
+          hi = s.points.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (s.points[mid].x < x) lo = mid + 1;
+          else hi = mid;
+        }
+        const best = [s.points[lo - 1], s.points[lo]]
+          .filter(Boolean)
+          .sort((a, b) => Math.abs(a.x - x) - Math.abs(b.x - x))[0];
+        markers[index].setAttribute("visibility", "hidden");
+        if (
+          best &&
+          best.x >= xmin &&
+          best.x <= xmax &&
+          best.y >= ymin &&
+          best.y <= ymax
+        ) {
+          const marker = markers[index];
+          marker.setAttribute("cx", X(best.x));
+          marker.setAttribute("cy", Y(best.y));
+          marker.setAttribute("visibility", "visible");
+          marker.dataset.x = best.x;
+          marker.dataset.value = best.y;
+          text.push(
+            `${s.run.display_name}${best.session ? " · " + best.session.label : ""}\n${axis}: ${format(best.x)} · ${smoothing ? "smoothed" : "value"}: ${format(best.y)}${smoothing ? " · raw: " + format(best.raw) : ""}`,
+          );
+        }
+      }
+      tooltip.textContent = text.join("\n");
+      tooltip.hidden = !text.length;
+      tooltip.style.left = `${Math.max(0, Math.min(e.clientX - card.getBoundingClientRect().left + 12, card.clientWidth - 220))}px`;
+      tooltip.style.top = `${e.clientY - card.getBoundingClientRect().top + 12}px`;
+    };
+    svg.onpointerleave = () => {
+      tooltip.hidden = true;
+      guide.setAttribute("visibility", "hidden");
+      markers.forEach((marker) => marker.setAttribute("visibility", "hidden"));
+    };
+    if (restoreFocus) svg.focus({ preventScroll: true });
+  }
+  draw();
   return card;
 }
-async function openDetail(uid) {
+async function openDetail(uid, tab = "summary") {
   state.detailUid = uid;
-  state.detailTab = "summary";
+  state.detailTab = tab;
+  const initial = state.runs.find((r) => r.uid === uid);
+  $("#detail-name").textContent = initial?.display_name || "Run details";
+  $("#detail-content").replaceChildren(
+    el("p", "Loading run details…", "muted"),
+  );
+  if (!$("#detail").open) $("#detail").showModal();
   const r = await detail(uid);
+  if (state.detailUid !== uid || !$("#detail").open) return;
   $("#detail-name").textContent = r.display_name;
   $("#detail-path").textContent = `${r.entity} / ${r.project} / ${r.name}`;
   if (!$("#detail").open) $("#detail").showModal();
   await renderDetail();
 }
 async function renderDetail() {
+  const uid = state.detailUid,
+    tab = state.detailTab;
   $$("[data-detail]").forEach((b) =>
     b.classList.toggle("active", b.dataset.detail === state.detailTab),
   );
   const r = await detail(state.detailUid);
+  if (uid !== state.detailUid || tab !== state.detailTab) return;
   const content = $("#detail-content");
   content.replaceChildren();
   if (state.detailTab === "summary" || state.detailTab === "config") {
@@ -475,13 +828,17 @@ async function renderDetail() {
     }
     if (!content.children.length)
       content.append(el("p", "Nothing logged yet.", "muted"));
+  } else if (state.detailTab === "sessions") {
+    renderSessions(content, r);
   } else if (state.detailTab === "logs") {
     const logs = await api(`/api/runs/${r.uid}/logs`);
+    if (uid !== state.detailUid || tab !== state.detailTab) return;
     content.append(
       el("pre", logs.lines.join("\n") || "No console output recorded."),
     );
   } else if (state.detailTab === "writers") {
     const data = await api(`/api/runs/${r.uid}/writers`);
+    if (uid !== state.detailUid || tab !== state.detailTab) return;
     for (const writer of data.writers) {
       const row = el("div", undefined, "kv");
       row.append(
@@ -497,6 +854,7 @@ async function renderDetail() {
       content.append(el("p", "This run uses a single standard writer."));
   } else if (state.detailTab === "artifacts") {
     const data = await api(`/api/runs/${r.uid}/artifacts`);
+    if (uid !== state.detailUid || tab !== state.detailTab) return;
     for (const artifact of data.artifacts) {
       const card = el("article", undefined, "file-item");
       card.append(
@@ -596,16 +954,61 @@ $$("[data-view]").forEach(
 );
 for (const id of ["connect", "empty-connect"]) $(`#${id}`).onclick = connect;
 $("#refresh").onclick = refresh;
-for (const id of ["search", "project-filter", "state-filter"])
+for (const id of [
+  "search",
+  "project-filter",
+  "state-filter",
+  "source-filter",
+  "selected-filter",
+])
   $(`#${id}`).addEventListener(id === "search" ? "input" : "change", () => {
+    state.runPage = 0;
     renderRuns();
-    renderCharts().catch(showError);
   });
 $("#select-all").onchange = (e) => {
-  for (const r of visible())
-    e.target.checked ? state.selected.add(r.uid) : state.selected.delete(r.uid);
+  const rows = visible().slice(
+    state.runPage * state.pageSize,
+    (state.runPage + 1) * state.pageSize,
+  );
+  const clear =
+    !e.target.checked ||
+    (state.selected.size >= 12 && rows.some((r) => state.selected.has(r.uid)));
+  for (const r of rows) {
+    if (clear) state.selected.delete(r.uid);
+    else if (state.selected.size < 12) state.selected.add(r.uid);
+  }
   renderRuns();
   renderCharts().catch(showError);
+};
+$("#clear-selection").onclick = () => {
+  state.selected.clear();
+  renderRuns();
+  renderCharts().catch(showError);
+};
+$("#clear-filters").onclick = () => {
+  for (const id of [
+    "search",
+    "project-filter",
+    "state-filter",
+    "source-filter",
+  ])
+    $("#" + id).value = "";
+  $("#selected-filter").checked = false;
+  state.runPage = 0;
+  renderRuns();
+};
+for (const [id, delta] of [
+  ["runs-prev", -1],
+  ["runs-next", 1],
+])
+  $("#" + id).onclick = () => {
+    state.runPage += delta;
+    renderRuns();
+  };
+$("#run-page-size").onchange = (e) => {
+  state.pageSize = Number(e.target.value);
+  state.runPage = 0;
+  renderRuns();
 };
 $$("[data-tab]").forEach(
   (b) =>
@@ -616,10 +1019,6 @@ $$("[data-tab]").forEach(
     }),
 );
 $("#x-axis").onchange = () => renderCharts().catch(showError);
-$("#smoothing").oninput = () => {
-  $("#smoothing-value").value = $("#smoothing").value;
-  renderCharts().catch(showError);
-};
 $("#close-detail").onclick = () => $("#detail").close();
 $$("[data-detail]").forEach(
   (b) =>
@@ -637,7 +1036,14 @@ $("#auth").addEventListener("close", () => {
     refresh();
   }
 });
+initMetrics();
 refresh();
 setInterval(() => {
-  if (!document.hidden && !$("#auth").open && !$("#detail").open) refresh();
+  if (
+    !document.hidden &&
+    !$("#auth").open &&
+    !$("#detail").open &&
+    !$(".plot-dialog[open]")
+  )
+    refresh();
 }, 5000);

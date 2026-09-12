@@ -402,6 +402,94 @@ header {
   gap: 18px;
   margin-bottom: 26px;
 }
+.metric-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.metric-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 150px;
+}
+.metric-toolbar label {
+  font-size: 12px;
+}
+.metric-group {
+  min-width: 0;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
+}
+.metric-group > summary {
+  cursor: pointer;
+  padding: 14px 2px;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.metric-group > summary .muted {
+  margin-left: 12px;
+  font-weight: 400;
+}
+.metric-group .metric-group {
+  margin-left: 8px;
+}
+.metric-groups {
+  margin-bottom: 24px;
+}
+.chart-loading {
+  min-height: 290px;
+  overflow-wrap: anywhere;
+}
+.comparison-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.comparison-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.comparison-item small {
+  display: block;
+  width: 100%;
+  color: #718479;
+}
+.session-badge {
+  display: inline-block;
+  margin: 4px 0 0 16px;
+  padding: 2px 7px;
+  font-size: 10px;
+  border-radius: 10px;
+  background: #edf4f0;
+}
+.session-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.session-card p {
+  margin: 6px 0;
+}
+.session-note {
+  font-size: 12px;
+  color: #718479;
+  line-height: 1.6;
+}
+.hover-point {
+  filter: drop-shadow(0 1px 2px #0006);
+}
 .chart {
   background: #fff;
   border: 1px solid var(--border);
@@ -416,6 +504,8 @@ header {
   align-items: center;
   font-size: 12px;
   font-weight: 550;
+  gap: 8px;
+  overflow-wrap: anywhere;
 }
 .chart-heading small {
   font-size: 9px;
@@ -465,6 +555,8 @@ header {
   box-shadow: 0 3px 12px #0002;
   white-space: pre-line;
   line-height: 1.6;
+  max-width: min(360px, calc(100% - 16px));
+  overflow-wrap: anywhere;
 }
 .chart-placeholder {
   grid-column: 1/-1;
@@ -943,4 +1035,283 @@ dialog::backdrop {
   padding: 12px;
   border-radius: 6px;
   text-decoration: none;
+}
+
+/* A persistent run navigator, independent of the scrolling chart workspace. */
+.sidebar {
+  width: 320px;
+  padding: 20px 14px 10px;
+}
+main {
+  margin-left: 320px;
+}
+.sidebar .workspace {
+  margin: 14px 0 10px;
+  padding: 8px;
+}
+.sidebar .nav-label,
+.sidebar-bottom {
+  display: none;
+}
+.sidebar .nav {
+  padding: 8px 10px;
+  margin: 0;
+}
+#run-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 18px;
+  gap: 10px;
+}
+.run-panel-title,
+.run-page-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.run-panel-title button {
+  font-size: 10px;
+  padding: 5px 7px;
+}
+#run-sidebar .search {
+  flex: none;
+}
+#run-sidebar .search input {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+.run-filters {
+  font-size: 12px;
+}
+.run-filters summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.run-filters label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.run-filters select {
+  min-width: 0;
+  flex: 1;
+  width: 100%;
+  font-size: 11px;
+}
+.run-filters button {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.run-page-select {
+  font-size: 11px;
+}
+.run-page-select label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+#runs-body {
+  flex: 1;
+  min-height: 90px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+}
+.run-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 7px;
+  border-bottom: 1px solid var(--border);
+}
+.run-row.selected {
+  background: #e6f0e9;
+  border-left: 3px solid var(--green);
+  padding-left: 4px;
+}
+.run-row > input {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.run-row-content {
+  flex: 1;
+  min-width: 0;
+}
+.run-row .run-name {
+  display: block;
+  font-size: 12px;
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  padding: 0;
+}
+.run-row .run-id {
+  margin: 4px 0;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.run-row .session-badge {
+  margin: 2px 0 4px;
+}
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: #75847d;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.run-meta .badge {
+  font-size: 9px;
+  padding: 2px 6px;
+}
+.run-pagination {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  font-size: 11px;
+}
+.run-pagination > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  margin-top: 7px;
+}
+.run-pagination button,
+.run-pagination select {
+  padding: 5px 7px;
+  font-size: 11px;
+}
+.run-empty {
+  padding: 16px 6px;
+  font-size: 12px;
+  color: #718479;
+}
+button:disabled,
+input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.stats article {
+  padding: 12px 16px;
+}
+.stats strong {
+  margin: 6px 0;
+  font-size: 24px;
+}
+.plot-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 12px;
+}
+.plot-controls label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  margin-right: auto;
+}
+.plot-controls input {
+  width: 75px;
+}
+.plot-controls output {
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.plot-controls button {
+  padding: 3px 8px;
+  font-size: 12px;
+  min-height: 27px;
+}
+.plot-hint {
+  font-size: 9px;
+  color: #84918d;
+  margin-top: 8px;
+}
+.plot-body svg {
+  cursor: crosshair;
+  user-select: none;
+}
+.plot-dialog {
+  width: min(1400px, 96vw);
+  max-width: 96vw;
+  max-height: 95vh;
+  padding: 18px;
+}
+.plot-dialog .detail-header {
+  margin-bottom: 12px;
+}
+.plot-dialog .detail-header h2 {
+  overflow-wrap: anywhere;
+}
+.plot-dialog .chart {
+  border: 0;
+  padding: 0;
+}
+.plot-dialog .chart-heading {
+  justify-content: flex-end;
+}
+.plot-dialog .chart-heading > span {
+  display: none;
+}
+.plot-dialog .plot-controls input {
+  width: 130px;
+}
+.plot-dialog .legend-item {
+  max-width: 100%;
+  font-size: 11px;
+}
+@media (min-width: 761px) and (max-width: 1200px) {
+  .sidebar {
+    width: 290px;
+  }
+  main {
+    margin-left: 290px;
+  }
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+    padding: 14px;
+    gap: 8px;
+  }
+  .sidebar .brand {
+    grid-column: 1 / -1;
+  }
+  .sidebar .workspace {
+    display: none;
+  }
+  .sidebar .nav {
+    font-size: 10px;
+    gap: 6px;
+  }
+  #run-sidebar {
+    grid-column: 1 / -1;
+    height: 440px;
+    margin-top: 8px;
+  }
+  main {
+    margin-left: 0;
+  }
+  .plot-dialog {
+    padding: 12px;
+  }
+  .plot-dialog .plot-controls input {
+    width: 75px;
+  }
 }

@@ -37,6 +37,12 @@ def test_identity_isolation_revocation_and_sessions(accounts_app):
     ).json()
     uid = response["data"]["upsertBucket"]["bucket"]["id"]
     assert client.get(f"/api/runs/{uid}", headers=other).status_code == 403
+    assert (
+        client.post(
+            "/api/series", headers=other, json={"runs": [uid], "keys": ["loss"]}
+        ).status_code
+        == 403
+    )
     assert client.get("/api/runs", headers=other).json()["runs"] == []
     denied = client.post(
         "/graphql",
@@ -111,6 +117,18 @@ def test_reader_cannot_write(accounts_app):
         json={"query": query, "variables": {"e": alice["username"]}},
     ).json()["errors"]
     assert not accounts_app.state.store.list_runs(project="uncategorized")
+    create = client.post(
+        "/graphql",
+        headers=headers,
+        json={"query": query, "variables": {"e": alice["username"]}},
+    ).json()
+    uid = create["data"]["upsertBucket"]["bucket"]["id"]
+    assert (
+        client.post(
+            "/api/series", headers=other, json={"runs": [uid], "keys": ["loss"]}
+        ).status_code
+        == 200
+    )
 
 
 def test_oauth_github_pkce_and_state(tmp_path, monkeypatch):

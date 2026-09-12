@@ -4,9 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css" />
-    <script src="/static/app.js" defer></script>
-    <script src="/static/account.js" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260912-plots2" />
+    <script src="/static/metrics.js?v=20260912-plots2" defer></script>
+    <script src="/static/app.js?v=20260912-plots2" defer></script>
+    <script src="/static/account.js?v=20260912-plots2" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -27,6 +28,74 @@
       <button class="nav" data-view="connect">
         <span>↗</span> Connect a client
       </button>
+      <section id="run-sidebar" aria-label="Run selection">
+        <div class="run-panel-title">
+          <h2>Runs <span id="run-count" class="pill">0</span></h2>
+          <button id="clear-selection">Clear selection</button>
+        </div>
+        <label class="search"
+          >⌕
+          <input
+            id="search"
+            type="search"
+            placeholder="Search name, ID, group, tags…"
+            aria-label="Search runs"
+        /></label>
+        <details class="run-filters">
+          <summary>Filter runs <span id="filter-count"></span></summary>
+          <label
+            >Project<select id="project-filter" aria-label="Project">
+              <option value="">All projects</option>
+            </select></label
+          >
+          <label
+            >Status<select id="state-filter" aria-label="Run status">
+              <option value="">All statuses</option>
+              <option>running</option>
+              <option>finished</option>
+              <option>failed</option>
+              <option>crashed</option>
+              <option>imported</option>
+            </select></label
+          >
+          <label
+            >Source<select id="source-filter" aria-label="Run source">
+              <option value="">All sources</option>
+              <option value="tensorboard">TensorBoard</option>
+              <option value="wandb">W&B SDK</option>
+            </select></label
+          >
+          <label
+            ><input id="selected-filter" type="checkbox" /> Selected runs
+            only</label
+          >
+          <button id="clear-filters">Reset filters</button>
+        </details>
+        <div class="run-page-select">
+          <label
+            ><input
+              id="select-all"
+              type="checkbox"
+              aria-label="Select page runs"
+            />
+            Select page</label
+          ><span class="muted">Compare up to 12</span>
+        </div>
+        <div id="runs-body" role="list" aria-label="Runs"></div>
+        <div class="run-pagination">
+          <span id="run-range" aria-live="polite"></span>
+          <div>
+            <button id="runs-prev" aria-label="Previous runs page">←</button
+            ><span id="run-page"></span
+            ><button id="runs-next" aria-label="Next runs page">→</button
+            ><select id="run-page-size" aria-label="Runs per page">
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+        </div>
+      </section>
       <div class="sidebar-bottom">
         <span class="status-dot"></span> Your data. Your infrastructure.<small
           >Open source · Apache 2.0</small
@@ -85,30 +154,6 @@
             ><small>Independent experiments</small>
           </article>
         </div>
-        <div class="workspace-toolbar">
-          <div class="tabs">
-            <button class="tab active" data-tab="charts">Overview</button
-            ><button class="tab" data-tab="runs">Runs</button>
-          </div>
-          <div class="filters">
-            <label class="search"
-              >⌕
-              <input
-                id="search"
-                placeholder="Search runs…"
-                aria-label="Search runs" /></label
-            ><select id="project-filter" aria-label="Project">
-              <option value="">All projects</option></select
-            ><select id="state-filter" aria-label="Run status">
-              <option value="">All statuses</option>
-              <option>running</option>
-              <option>finished</option>
-              <option>failed</option>
-              <option>crashed</option>
-              <option>imported</option>
-            </select>
-          </div>
-        </div>
         <div id="empty" class="empty" hidden>
           <div class="empty-symbol">⌁</div>
           <h2>Your next experiment starts here</h2>
@@ -125,7 +170,9 @@
             <div>
               <span class="status-dot"></span
               ><span id="selection-count">0 runs selected</span
-              ><span class="muted">Select runs below to compare</span>
+              ><span class="muted"
+                >Select runs in the left panel to compare</span
+              >
             </div>
             <div>
               <label
@@ -135,48 +182,27 @@
                   <option value="_timestamp">Wall time</option>
                   <option value="_runtime">Runtime</option>
                 </select></label
-              ><label
-                >Smoothing
-                <input
-                  id="smoothing"
-                  type="range"
-                  min="0"
-                  max="0.95"
-                  value="0"
-                  step="0.05"
-                /><output id="smoothing-value">0</output></label
               >
             </div>
           </div>
-          <div id="chart-grid" class="chart-grid"></div>
-          <section class="runs-panel">
-            <div class="panel-heading">
-              <h2>Runs <span id="run-count" class="pill">0</span></h2>
-              <span class="muted">Click a run to inspect details</span>
-            </div>
-            <div class="table-wrap">
-              <table class="runs-table">
-                <thead>
-                  <tr>
-                    <th>
-                      <input
-                        id="select-all"
-                        type="checkbox"
-                        aria-label="Select visible runs"
-                      />
-                    </th>
-                    <th>RUN NAME</th>
-                    <th>STATUS</th>
-                    <th>PROJECT</th>
-                    <th>STEP</th>
-                    <th>SOURCE</th>
-                    <th>UPDATED</th>
-                  </tr>
-                </thead>
-                <tbody id="runs-body"></tbody>
-              </table>
-            </div>
-          </section>
+          <div id="metric-toolbar" class="metric-toolbar">
+            <label for="metric-search">Metrics</label>
+            <input
+              id="metric-search"
+              type="search"
+              placeholder="Search all metrics…"
+              aria-label="Search metrics"
+            />
+            <span id="metric-count" class="muted"></span>
+            <button id="expand-metrics">Expand all</button>
+            <button id="collapse-metrics">Collapse all</button>
+            <label
+              ><input id="show-sessions" type="checkbox" checked /> Session
+              starts</label
+            >
+          </div>
+          <div id="comparison-legend" class="comparison-legend"></div>
+          <div id="chart-grid" class="metric-groups"></div>
         </div>
       </section>
       <section id="sweeps-view" class="view" hidden>
@@ -255,6 +281,7 @@ wandb.init(project="my-project",
         ><button class="tab" data-detail="logs">Logs</button>
         <button class="tab" data-detail="artifacts">Artifacts</button>
         <button class="tab" data-detail="writers">Writers</button>
+        <button class="tab" data-detail="sessions">Sessions</button>
       </div>
       <div id="detail-content"></div>
     </dialog>

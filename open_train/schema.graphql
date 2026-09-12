@@ -13,7 +13,7 @@ type Query {
   artifactCollection(id: ID!): ArtifactCollection
   clientIDMapping(clientID: ID!): ClientIDMapping
 }
-type User { id: ID!, entity: String!, username: String!, name: String!, email: String!, flags: JSONString!, teams: EntityConnection!, admin: Boolean!, deletedAt: String, apiKeys: ApiKeyConnection! }
+type User { id: ID!, entity: String!, username: String!, name: String!, email: String!, flags: JSONString!, teams: EntityConnection!, admin: Boolean!, deletedAt: String, apiKeys: ApiKeyConnection!, serverInfo: ServerInfo! }
 type ApiKey { id: ID!, name: String!, description: String }
 type ApiKeyConnection { edges: [ApiKeyEdge!]! }
 type ApiKeyEdge { node: ApiKey! }

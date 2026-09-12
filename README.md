@@ -42,6 +42,31 @@ with wandb.init(project="my-project", config={"lr": 0.001}) as run:
 
 Select runs to overlay charts. Search by name, run ID, group, or tag; filter by project/status. Click a run to inspect config, summary, files, media, tables, and console output. Choose a custom metric as the x axis to compare training steps across checkpoints.
 
+Runs live in a scrollable left sidebar with name/ID/group/tag search, project/status/source filters, a selected-only filter, and 20/50/100-row pagination. Selection persists across pages and filters; up to 12 runs can be compared at once. Select-page actions respect that limit, and Clear selection resets the comparison.
+
+Metrics are organized into collapsible slash-separated namespaces (`train`, `eval`, and nested groups). Search metrics by any part of their name; every metric is accessible, without a first-12 cutoff. Charts load progressively as they enter the viewport, with batched queries and revision-aware caching. Each plot has its own smoothing slider (remembered in the browser), zoom-in/out and reset buttons, rectangle-drag zoom, and a maximize button. Ctrl/Command + scroll zooms around the cursor; double-click resets. Focus a plot and use `+`, `-`, or `0` for keyboard zoom/reset. Expanded and normal views share that plot's settings. Zoom operates on the displayed, potentially sampled series; the sampling indicator remains visible. Plot controls reuse cached data without refetching other charts. Hover shows a crosshair and a colored marker on each displayed curve; when smoothing is enabled, both smoothed and raw values are shown.
+
+TensorBoard imports with session provenance show session-count badges, a **Sessions** detail tab, and optional session-start markers. Session labels and alternating solid/dashed segments use recorded timestamp ranges; ambiguous or missing provenance is not guessed. A merged run remains one logical experiment. Older imports need session timestamps added before points can be assigned to sessions; separate SDK run IDs remain distinct comparisons.
+
+## Unreliable networks / client-side caching
+
+Online W&B clients already persist local logs and retry interrupted uploads.
+For jobs that must also **start and finish offline**, run unchanged W&B
+instrumentation with `WANDB_MODE=offline`, persistent `WANDB_DIR`,
+`WANDB_CACHE_DIR`, and `WANDB_DATA_DIR`, plus the new client-side uploader:
+
+```bash
+pip install '.[client]'
+# With WANDB_BASE_URL and your personal WANDB_API_KEY set:
+open-train sync-watch "$WANDB_DIR"
+```
+
+It uploads live when connected, retries failures, resumes its queue after a
+restart, and retains local files after delivery. Run it independently of training
+on each client machine. See [setup, checkpoint caveats, and crash recovery](docs/network-resilience.md).
+This is a client capability; deploying the dashboard alone does not enable it on
+training machines.
+
 ## TensorBoard import
 
 ```bash

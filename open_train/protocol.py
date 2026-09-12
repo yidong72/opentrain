@@ -74,24 +74,10 @@ class Protocol:
                 );
             """)
         self.bind("Query", "viewer", lambda *_: self.viewer())
-        self.bind(
-            "Query",
-            "serverInfo",
-            lambda *_: {
-                "cliVersionInfo": {
-                    "min_cli_version": "0.18.0",
-                    "max_cli_version": "0.30.0",
-                },
-                "latestLocalVersionInfo": {
-                    "outOfDate": False,
-                    "latestVersionString": "0.40.0",
-                    "versionOnThisInstanceString": "0.40.0",
-                },
-                "features": [
-                    {"name": "TOTAL_COUNT_IN_FILE_CONNECTION", "isEnabled": True}
-                ],
-            },
-        )
+        # SDKs/integrations query server metadata at either location. Keep the
+        # response identical rather than adding a nullable compatibility stub.
+        for typename in ("Query", "User"):
+            self.bind(typename, "serverInfo", lambda *_: self.server_info())
         for field in ("project", "model"):
             self.bind(
                 "Query",
@@ -209,6 +195,21 @@ class Protocol:
         self.artifacts = ArtifactProtocol(self)
         self.bind("User", "admin", lambda r, info: bool(r.get("admin", False)))
         self.bind("User", "apiKeys", self.user_keys)
+
+    @staticmethod
+    def server_info():
+        return {
+            "cliVersionInfo": {
+                "min_cli_version": "0.18.0",
+                "max_cli_version": "0.30.0",
+            },
+            "latestLocalVersionInfo": {
+                "outOfDate": False,
+                "latestVersionString": "0.40.0",
+                "versionOnThisInstanceString": "0.40.0",
+            },
+            "features": [{"name": "TOTAL_COUNT_IN_FILE_CONNECTION", "isEnabled": True}],
+        }
 
     def user_keys(self, user, info):
         current = principal.get() or {}

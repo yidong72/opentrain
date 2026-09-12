@@ -1,8 +1,63 @@
 import httpx
+import pytest
 from tensorboard.compat.proto import event_pb2, summary_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
 
 from open_train.tensorboard import import_once
+
+
+def test_watch_retries_outages(monkeypatch, capsys):
+    from open_train import cli, tensorboard
+
+    calls = []
+    sleeps = []
+
+    def upload(*args):
+        calls.append(args)
+        if len(calls) < 3:
+            raise httpx.ConnectError("network unavailable")
+        if len(calls) == 3:
+            return [{"events_added": 5}]
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(tensorboard, "import_once", upload)
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+    monkeypatch.setattr(cli.random, "uniform", lambda *args: 1)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "open-train",
+            "import-tensorboard",
+            "logs",
+            "--project",
+            "test",
+            "--watch",
+            "--interval",
+            "2",
+        ],
+    )
+    cli.main()
+    assert len(calls) == 4
+    assert sleeps == [2, 4, 2]
+    assert "event files retained" in capsys.readouterr().err
+
+
+def test_watch_does_not_retry_bad_credentials(monkeypatch):
+    from open_train import cli, tensorboard
+
+    def upload(*args):
+        httpx.Response(
+            401, request=httpx.Request("POST", "http://localhost")
+        ).raise_for_status()
+
+    monkeypatch.setattr(tensorboard, "import_once", upload)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["open-train", "import-tensorboard", "logs", "--project", "test", "--watch"],
+    )
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 1
 
 
 def write_events(path, values, restart=None, base=100):

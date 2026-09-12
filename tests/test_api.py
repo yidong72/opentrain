@@ -78,3 +78,62 @@ def test_empty_run_has_valid_resume_status(client):
     assert bucket["historyLineCount"] == 0
     assert bucket["historyTail"] == "[]"
     assert '"t"' in bucket["wandbConfig"]
+
+
+def test_batched_series_and_compact_runs(client):
+    import json
+
+    store = client.app.state.store
+    uid = store.upsert(
+        {
+            "name": "batch",
+            "config": json.dumps(
+                {
+                    "tensorboard_import": {
+                        "value": {
+                            "sessions": [{"directory": "s1"}, {"directory": "s2"}]
+                        }
+                    }
+                }
+            ),
+        }
+    )[0]["uid"]
+    store.import_events(
+        uid,
+        [
+            {
+                "step": i,
+                "wall_time": 100 + i,
+                "values": {"train/loss": i % 7, "global_step": i * 2},
+                "restart": False,
+            }
+            for i in range(50)
+        ],
+    )
+    body = {"runs": [uid], "keys": ["train/loss", "missing"], "limit": 10}
+    assert client.post("/api/series", json=body).status_code == 401
+    headers = {"Authorization": "Bearer secret"}
+    response = client.post("/api/series", json=body, headers=headers)
+    assert response.status_code == 200
+    actual = response.json()["series"][uid]["train/loss"]
+    old = client.get(
+        f"/api/runs/{uid}/series?key=train/loss&limit=10", headers=headers
+    ).json()
+    assert actual["points"] == old["points"]
+    assert actual["timestamps"] == [100 + x for x, _ in actual["points"]]
+    assert actual["sampled"] and actual["total"] == 50
+    assert response.json()["series"][uid]["missing"]["points"] == []
+    body["x"] = "global_step"
+    other = client.post("/api/series", json=body, headers=headers).json()["series"][
+        uid
+    ]["train/loss"]
+    assert other["timestamps"] == [100 + x / 2 for x, _ in other["points"]]
+    compact = client.get("/api/runs?compact=true", headers=headers).json()["runs"][0]
+    assert compact["session_count"] == 2 and compact["has_metrics"]
+    assert "config" not in compact and compact["summary"] == {"_step": 49}
+    assert (
+        client.post(
+            "/api/series", headers=headers, json={"runs": [uid], "keys": ["x"] * 13}
+        ).status_code
+        == 422
+    )

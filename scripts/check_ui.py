@@ -29,10 +29,10 @@ with sync_playwright() as playwright:
     page.goto(args.base_url)
     expect(page.locator("#connection")).to_contain_text("Live")
     expect(page.locator(".chart svg").first).to_be_visible()
-    assert page.locator("#runs-body tr").count() >= 3
+    assert page.locator("#runs-body .run-row").count() >= 3
     page.screenshot(path=str(output / "dashboard-desktop.png"), full_page=True)
     page.locator("#search").fill("transformer-resumed")
-    expect(page.locator("#runs-body tr")).to_have_count(1)
+    expect(page.locator("#runs-body .run-row")).to_have_count(1)
     page.locator(".run-name").click()
     expect(page.locator("#detail")).to_be_visible()
     page.locator('[data-detail="config"]').click()
@@ -40,8 +40,11 @@ with sync_playwright() as playwright:
     page.locator("#close-detail").click()
     page.locator("#search").fill("")
     page.locator("#x-axis").select_option("global_step")
-    expect(page.locator(".chart svg").first).to_have_attribute(
-        "aria-label", "eval/accuracy by global_step across 3 runs"
+    metric = page.locator('.chart[data-metric="eval/accuracy"]')
+    metric.scroll_into_view_if_needed()
+    expect(metric.locator("svg")).to_have_attribute(
+        "aria-label",
+        "eval/accuracy by global_step. Drag a rectangle to zoom. Use plus, minus, or zero keys to zoom and reset.",
     )
     page.locator('[data-view="connect"]').click()
     expect(page.locator("#connect-code")).to_contain_text("WANDB_BASE_URL")
@@ -54,7 +57,7 @@ with sync_playwright() as playwright:
     page.screenshot(path=str(output / "dashboard-mobile.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1060})
     page.locator("#search").fill("media-example")
-    if page.locator("#runs-body tr").count():
+    if page.locator("#runs-body .run-row").count():
         page.locator(".run-name").first.click()
         page.locator('[data-detail="files"]').click()
         page.get_by_role("button", name="Preview table").first.click()

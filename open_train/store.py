@@ -365,7 +365,15 @@ class Store:
             and (maximum is None or r.get("_step", 0) < maximum)
         ]
 
-    def series(self, uid, key, stream="history", limit=1500, x="_step"):
+    def series(
+        self,
+        uid,
+        key,
+        stream="history",
+        limit=1500,
+        x="_step",
+        include_timestamps=False,
+    ):
         self.assert_run(uid)
         with self.connect() as db:
             if x == "_step":
@@ -380,7 +388,7 @@ class Store:
                     WHERE a.run=? AND a.stream=? AND a.key=? AND b.key=? AND b.value IS NOT NULL ORDER BY b.value""",
                     (uid, stream, key, x),
                 ).fetchall()
-        points = [[r["x"], r["value"]] for r in rows]
+        points = [[r["x"], r["value"], r["timestamp"]] for r in rows]
         # Min/max buckets preserve spikes as well as endpoints while bounding response size.
         if len(points) > limit:
             result = [points[0]]
@@ -396,11 +404,14 @@ class Store:
                     result.extend(bucket[i] for i in sorted(selected))
             result.append(points[-1])
             points = result
-        return {
-            "points": points,
+        result = {
+            "points": [p[:2] for p in points],
             "total": len(rows),
             "sampled": len(points) < len(rows),
         }
+        if include_timestamps:
+            result["timestamps"] = [p[2] for p in points]
+        return result
 
     def keys(self, uid):
         self.assert_run(uid)
