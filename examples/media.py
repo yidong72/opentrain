@@ -4,9 +4,8 @@ import tempfile
 import wave
 from pathlib import Path
 
-from PIL import Image, ImageDraw
-
 import wandb
+from PIL import Image, ImageDraw
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="open-train-media-") as directory:
