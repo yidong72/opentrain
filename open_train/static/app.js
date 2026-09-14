@@ -119,7 +119,7 @@ function connect() {
   $("#connect-code").textContent =
     `export WANDB_BASE_URL=${location.origin}\nexport WANDB_API_KEY=${state.entity ? "YOUR_API_KEY" : "local00000000000000000000000000000000000"}\n# With accounts, create a key in Account & access.\nexport WANDB_ENTITY=${state.entity || "local"}`;
 }
-async function refresh() {
+async function refresh({ layout = false } = {}) {
   if (state.loading) return;
   state.loading = true;
   try {
@@ -133,6 +133,11 @@ async function refresh() {
       if (!data.has_more) break;
       offset += 500;
     }
+    // New telemetry must not reorder the sidebar or the selected plot series.
+    const order = new Map(state.runs.map((r, i) => [r.uid, i]));
+    runs.sort(
+      (a, b) => (order.get(a.uid) ?? Infinity) - (order.get(b.uid) ?? Infinity),
+    );
     const changed =
       JSON.stringify(runs.map((r) => [r.uid, r.updated, r.state])) !==
       JSON.stringify(state.runs.map((r) => [r.uid, r.updated, r.state]));
@@ -141,14 +146,24 @@ async function refresh() {
     for (const uid of state.selected)
       if (!available.has(uid)) state.selected.delete(uid);
     $("#error").hidden = true;
-    $("#connection").textContent = "Live · refreshes every 5s";
+    $("#connection").textContent = "Live · visible plots update every 5s";
     const project = $("#project-filter").value;
-    $("#project-filter").replaceChildren(new Option("All projects", ""));
-    for (const p of [
+    const projects = [
       ...new Set(runs.map((r) => `${r.entity}/${r.project}`)),
-    ].sort())
-      $("#project-filter").add(new Option(p, p));
-    $("#project-filter").value = project;
+    ].sort();
+    if (
+      JSON.stringify(
+        [...$("#project-filter").options].slice(1).map((o) => o.value),
+      ) !== JSON.stringify(projects)
+    ) {
+      $("#project-filter").replaceChildren(new Option("All projects", ""));
+      for (const p of projects) $("#project-filter").add(new Option(p, p));
+    }
+    $("#project-filter").value = [...$("#project-filter").options].some(
+      (o) => o.value === project,
+    )
+      ? project
+      : "";
     $("#total").textContent = runs.length;
     $("#nav-count").textContent = runs.length;
     $("#active").textContent = runs.filter((r) => r.state === "running").length;
@@ -158,7 +173,7 @@ async function refresh() {
     $("#projects-count").textContent = new Set(
       runs.map((r) => `${r.entity}/${r.project}`),
     ).size;
-    if (!state.initialized && runs.length) {
+    if (!state.initialized && (runs.length || state.sharedView)) {
       let path = location.pathname.split("/");
       let target = runs.find(
         (r) =>
@@ -174,14 +189,29 @@ async function refresh() {
             ([key, value]) => !key.startsWith("_") && typeof value === "number",
           ),
       );
+      const projectPath =
+        path.length === 3 && path[1] && path[2]
+          ? `${decodeURIComponent(path[1])}/${decodeURIComponent(path[2])}`
+          : "";
+      if (
+        projectPath &&
+        [...$("#project-filter").options].some((o) => o.value === projectPath)
+      )
+        $("#project-filter").value = projectPath;
       for (const r of target
         ? [target]
-        : (metricRuns.length ? metricRuns : runs).slice(0, 3))
+        : (metricRuns.length ? metricRuns : runs)
+            .filter(
+              (r) => !projectPath || `${r.entity}/${r.project}` === projectPath,
+            )
+            .slice(0, 3))
         state.selected.add(r.uid);
+      if (state.sharedView) restoreSharedView();
       state.initialized = true;
       if (target) openDetail(target.uid);
     }
-    if (changed) renderRuns();
+    if (changed) renderRuns({ live: true });
+    if (layout) metricView.signature = null;
     await renderCharts();
   } catch (e) {
     $("#connection").textContent = "Disconnected";
@@ -190,7 +220,7 @@ async function refresh() {
     state.loading = false;
   }
 }
-function renderRuns() {
+function renderRuns({ live = false } = {}) {
   const filtered = visible();
   const pages = Math.max(1, Math.ceil(filtered.length / state.pageSize));
   state.runPage = Math.min(state.runPage, pages - 1);
@@ -212,6 +242,37 @@ function renderRuns() {
       $("#source-filter").value,
       $("#selected-filter").checked,
     ].filter(Boolean).length || "";
+  const existing = $$("#runs-body .run-row");
+  if (
+    live &&
+    rows.length &&
+    rows.length === existing.length &&
+    rows.every((r, i) => r.uid === existing[i].dataset.uid)
+  ) {
+    for (const [i, r] of rows.entries()) {
+      const tr = existing[i];
+      const badge = $(".badge", tr);
+      badge.textContent = r.state;
+      badge.className = `badge ${r.state}`;
+      $(".run-step", tr).textContent = `Step ${format(r.summary._step)}`;
+      $("small.run-meta", tr).textContent =
+        `${r.project} · ${r.source === "tensorboard" ? "TensorBoard" : "W&B SDK"} · ${age(r.updated)}`;
+      const button = $(".run-name", tr);
+      button.lastChild.textContent = r.display_name;
+      button.title = r.display_name;
+      let sessions = $(".session-badge", tr);
+      if (!sessions && r.session_count > 1) {
+        sessions = el("button", "", "session-badge");
+        sessions.onclick = () => openDetail(r.uid, "sessions").catch(showError);
+        $(".run-row-content", tr).insertBefore(sessions, $(".run-meta", tr));
+      }
+      if (sessions) {
+        sessions.hidden = r.session_count < 2;
+        sessions.textContent = `${r.session_count} sessions`;
+      }
+    }
+    return;
+  }
   $("#runs-body").replaceChildren();
   if (!rows.length)
     $("#runs-body").append(
@@ -253,7 +314,7 @@ function renderRuns() {
     const meta = el("div", undefined, "run-meta");
     meta.append(
       el("span", r.state, `badge ${r.state}`),
-      el("span", `Step ${format(r.summary._step)}`),
+      el("span", `Step ${format(r.summary._step)}`, "run-step"),
     );
     name.append(
       meta,
@@ -293,13 +354,27 @@ function plotPreference(key, axis) {
   if (!plotPreferences.has(key)) {
     let smoothing = 0;
     try {
-      const saved = Number(localStorage.getItem(`open-train-smoothing:${key}`));
+      const saved = state.sharedOverrides
+        ? 0
+        : Number(localStorage.getItem(`open-train-smoothing:${key}`));
       if (Number.isFinite(saved))
         smoothing = Math.max(0, Math.min(0.95, saved));
     } catch {
       /* Preferences are optional when browser storage is unavailable. */
     }
-    plotPreferences.set(key, { smoothing, domains: new Map() });
+    let savedAxis = "";
+    try {
+      savedAxis = state.sharedOverrides
+        ? ""
+        : localStorage.getItem(`open-train-axis:${key}`) || "";
+    } catch {
+      /* Optional preference. */
+    }
+    plotPreferences.set(key, {
+      smoothing,
+      axis: savedAxis,
+      domains: new Map(),
+    });
   }
   return plotPreferences.get(key);
 }
@@ -316,16 +391,44 @@ function chart(key, series, axis, expanded = false) {
     ),
   );
   card.append(heading);
-  const missingAxis = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
-  if (missingAxis)
-    card.append(
-      el(
-        "p",
-        `${missingAxis} metric records omitted: missing or unverified ${axis} pairing.`,
-        "muted",
-      ),
-    );
+  const warning = el("p", "", "muted plot-warning");
+  card.append(warning);
   const controls = el("div", undefined, "plot-controls");
+  const axisLabel = el("label", "X axis ");
+  const axisInput = el("select");
+  axisInput.className = "plot-axis";
+  axisInput.setAttribute("aria-label", `X axis for ${key}`);
+  axisInput.add(new Option("Use dashboard default", ""));
+  for (const option of $("#x-axis").options)
+    axisInput.add(new Option(option.textContent, option.value));
+  if (
+    preference.axis &&
+    ![...axisInput.options].some((o) => o.value === preference.axis)
+  )
+    axisInput.add(new Option(preference.axis, preference.axis));
+  axisInput.value = preference.axis;
+  axisInput.onchange = async () => {
+    preference.axis = axisInput.value;
+    const requestedAxis = preference.axis;
+    try {
+      localStorage.setItem(`open-train-axis:${key}`, preference.axis);
+    } catch {
+      /* Optional preference. */
+    }
+    metricView.signature = null;
+    try {
+      await renderCharts();
+      if (expanded) {
+        const next = await loadPlot(key);
+        if (card.isConnected && preference.axis === requestedAxis)
+          card.replaceWith(next);
+      }
+    } catch (error) {
+      showError(error);
+    }
+  };
+  axisLabel.append(axisInput);
+  controls.append(axisLabel);
   const smoothingLabel = el("label", "Smoothing ");
   const smoothingInput = el("input");
   smoothingInput.type = "range";
@@ -348,6 +451,9 @@ function chart(key, series, axis, expanded = false) {
   const zoomIn = action("Zoom in", "+", "plot-zoom-in");
   const zoomOut = action("Zoom out", "−", "plot-zoom-out");
   const reset = action("Reset zoom", "Reset", "plot-reset");
+  action("Share plot", "Share", "plot-share").onclick = () => shareView(key);
+  action("Download PNG", "PNG", "plot-export").onclick = () =>
+    exportPlot(card, key, axis, series).catch(showError);
   if (!expanded) {
     action("Maximize plot", "⛶", "plot-maximize").onclick = () => {
       const dialog = el("dialog", undefined, "plot-dialog");
@@ -368,11 +474,66 @@ function chart(key, series, axis, expanded = false) {
       document.body.append(dialog);
       dialog.showModal();
       close.focus();
+      scheduleLivePlots();
     };
   }
   card.append(controls);
   const body = el("div", undefined, "plot-body");
   card.append(body);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  const empty = el("div", "No values for this axis.", "chart-placeholder");
+  const legend = el("div", undefined, "chart-legend");
+  const hint = el(
+    "small",
+    "Drag to zoom · Ctrl/⌘ + scroll to zoom · double-click to reset",
+    "plot-hint",
+  );
+  const tooltip = el("div", undefined, "tooltip");
+  body.append(empty, svg, legend, hint, tooltip);
+  let wheelHandler,
+    pending,
+    pointerInside = false,
+    pointerDown = false;
+  card.liveSeries = series;
+  card.requestedAxis = preference.axis || $("#x-axis").value;
+  function inspecting() {
+    return (
+      pointerInside ||
+      pointerDown ||
+      (card.contains(document.activeElement) &&
+        document.activeElement.matches("input,select"))
+    );
+  }
+  function applyPending() {
+    if (!pending || inspecting() || !card.isConnected) return;
+    [series, axis] = pending;
+    pending = null;
+    delete card.dataset.pendingUpdate;
+    draw();
+  }
+  card.updateSeries = (next, nextAxis) => {
+    card.liveSeries = next;
+    pending = [next, nextAxis];
+    card.dataset.pendingUpdate = "true";
+    applyPending();
+  };
+  card.addEventListener("pointerenter", () => {
+    pointerInside = true;
+  });
+  card.addEventListener("pointerleave", () => {
+    pointerInside = false;
+    applyPending();
+  });
+  card.addEventListener("pointerdown", () => {
+    pointerDown = true;
+  });
+  for (const event of ["pointerup", "pointercancel"])
+    card.addEventListener(event, () => {
+      pointerDown = false;
+      applyPending();
+    });
+  card.addEventListener("focusout", () => queueMicrotask(applyPending));
   smoothingInput.oninput = () => {
     preference.smoothing = Number(smoothingInput.value);
     smoothingValue.value = smoothingInput.value;
@@ -390,16 +551,37 @@ function chart(key, series, axis, expanded = false) {
   };
   function draw() {
     const restoreFocus = document.activeElement === $("svg", body);
-    body.replaceChildren();
+    // Keep the card, controls and SVG root mounted. Repaint synchronously;
+    // live data waits while the user is hovering, dragging or editing controls.
+    svg.replaceChildren();
+    legend.replaceChildren();
+    tooltip.hidden = true;
+    $("small", heading).textContent = series.some((s) => s.sampled)
+      ? "Sampled · min/max"
+      : "All points";
+    const missingAxis = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
+    const mixed =
+      axis === "auto" &&
+      new Set(
+        series.filter((s) => s.total || s.missing_axis).map((s) => s.axis),
+      ).size > 1;
+    warning.hidden = !missingAxis && !mixed;
+    warning.textContent = mixed
+      ? "Runs define different axes. Select an explicit X axis on this plot."
+      : `${missingAxis} metric records omitted: missing or unverified ${axis} pairing.`;
+    card.dataset.total = series.reduce((n, s) => n + (s.total || 0), 0);
     const w = expanded ? 1000 : 530,
       h = expanded ? 520 : 235,
       pad = { l: 47, r: 15, t: 10, b: 34 };
     let points = series.flatMap((s) => s.points).filter((p) => p[1] !== null);
+    empty.hidden = points.length > 0;
+    svg.hidden = legend.hidden = hint.hidden = !points.length;
+    svg.style.display = points.length ? "" : "none";
     if (!points.length) {
-      body.append(el("div", "No values for this axis.", "chart-placeholder"));
       zoomIn.disabled = zoomOut.disabled = reset.disabled = true;
       return;
     }
+    zoomIn.disabled = false;
     let xmin = Infinity,
       xmax = -Infinity,
       ymin = Infinity,
@@ -455,8 +637,6 @@ function chart(key, series, axis, expanded = false) {
     };
     const X = (x) => pad.l + ((x - xmin) / (xmax - xmin)) * (w - pad.l - pad.r),
       Y = (y) => h - pad.b - ((y - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
-    const ns = "http://www.w3.org/2000/svg",
-      svg = document.createElementNS(ns, "svg");
     svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     svg.setAttribute("role", "img");
     svg.setAttribute(
@@ -522,15 +702,14 @@ function chart(key, series, axis, expanded = false) {
     }
     const smoothing = preference.smoothing;
     const drawn = [];
-    if ($("#show-sessions").checked && ["_step", "_timestamp"].includes(axis)) {
+    if ($("#show-sessions").checked) {
       for (const s of series) {
         const starts = new Map();
         for (const session of runSessions(s.run).slice(1)) {
-          const x =
-            axis === "_step" ? session.first_step : session.first_wall_time;
+          const x = sessionStart(session, axis, s);
           if (!Number.isFinite(x) || x < xmin || x > xmax) continue;
           if (!starts.has(x)) starts.set(x, []);
-          starts.get(x).push(session.label);
+          starts.get(x).push(session);
         }
         for (const [x, labels] of starts) {
           const marker = node("line", {
@@ -542,10 +721,10 @@ function chart(key, series, axis, expanded = false) {
             "stroke-dasharray": "3 5",
             opacity: 0.4,
             class: "session-start",
-            "pointer-events": "none",
+            "pointer-events": "stroke",
           });
           const title = document.createElementNS(ns, "title");
-          title.textContent = `${s.run.display_name} · ${labels.join(", ")} start at ${format(x)}`;
+          title.textContent = `${s.run.display_name}\n${labels.map(sessionDescription).join("\n")}\n${axis}: ${format(x)}`;
           marker.append(title);
           node(
             "text",
@@ -556,7 +735,7 @@ function chart(key, series, axis, expanded = false) {
               "font-size": 9,
               "pointer-events": "none",
             },
-            labels.join("/"),
+            labels.map((s) => s.label).join("/"),
           );
         }
       }
@@ -615,14 +794,12 @@ function chart(key, series, axis, expanded = false) {
           "clip-path": `url(#${clipID})`,
         });
     }
-    body.append(svg);
     svg.style.touchAction = "none";
     svg.setAttribute("tabindex", "0");
     svg.setAttribute(
       "aria-label",
       `${key} by ${axis}. Drag a rectangle to zoom. Use plus, minus, or zero keys to zoom and reset.`,
     );
-    const legend = el("div", undefined, "chart-legend");
     for (const s of series) {
       const item = el("span", undefined, "legend-item"),
         line = el("i", undefined, "legend-line");
@@ -631,17 +808,6 @@ function chart(key, series, axis, expanded = false) {
       item.append(line, document.createTextNode(s.run.display_name));
       legend.append(item);
     }
-    body.append(legend);
-    body.append(
-      el(
-        "small",
-        "Drag to zoom · Ctrl/⌘ + scroll to zoom · double-click to reset",
-        "plot-hint",
-      ),
-    );
-    const tooltip = el("div", undefined, "tooltip");
-    tooltip.hidden = true;
-    body.append(tooltip);
     const guide = node("line", {
       y1: pad.t,
       y2: h - pad.b,
@@ -719,16 +885,14 @@ function chart(key, series, axis, expanded = false) {
         else zoom(e.key === "-" ? 2 : 0.5);
       }
     };
-    svg.addEventListener(
-      "wheel",
-      (e) => {
-        if (!e.ctrlKey && !e.metaKey) return;
-        e.preventDefault();
-        const p = coordinates(e);
-        zoom(e.deltaY > 0 ? 1.25 : 0.8, unX(p.x), unY(p.y));
-      },
-      { passive: false },
-    );
+    if (wheelHandler) svg.removeEventListener("wheel", wheelHandler);
+    wheelHandler = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const p = coordinates(e);
+      zoom(e.deltaY > 0 ? 1.25 : 0.8, unX(p.x), unY(p.y));
+    };
+    svg.addEventListener("wheel", wheelHandler, { passive: false });
     svg.onpointermove = (e) => {
       const p = coordinates(e),
         x = unX(p.x);
@@ -962,14 +1126,8 @@ $$("[data-view]").forEach(
       b.dataset.view === "connect" ? connect() : switchView(b.dataset.view)),
 );
 for (const id of ["connect", "empty-connect"]) $(`#${id}`).onclick = connect;
-$("#refresh").onclick = refresh;
-for (const id of [
-  "search",
-  "project-filter",
-  "state-filter",
-  "source-filter",
-  "selected-filter",
-])
+$("#refresh").onclick = () => refresh({ layout: true });
+for (const id of ["search", "state-filter", "source-filter", "selected-filter"])
   $(`#${id}`).addEventListener(id === "search" ? "input" : "change", () => {
     state.runPage = 0;
     renderRuns();
@@ -1046,13 +1204,8 @@ $("#auth").addEventListener("close", () => {
   }
 });
 initMetrics();
+initWorkspace();
 refresh();
 setInterval(() => {
-  if (
-    !document.hidden &&
-    !$("#auth").open &&
-    !$("#detail").open &&
-    !$(".plot-dialog[open]")
-  )
-    refresh();
+  if (!document.hidden && !$("#auth").open && !$("#detail").open) refresh();
 }, 5000);

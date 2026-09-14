@@ -135,13 +135,20 @@ class Protocol:
             ("logLineCount", "output.log"),
         ):
             self.bind(
-                "Run", field, lambda r, info, f=filename: self.store.count(r["id"], f)
+                "Run",
+                field,
+                lambda r, info, f=filename: (
+                    self.resume_status(r, info)["line_count"]
+                    if f == "wandb-history.jsonl"
+                    else self.store.count(r["id"], f)
+                ),
             )
         self.bind(
             "Run",
             "historyTail",
-            lambda r, info: dumps(self.store.lines(r["id"], "wandb-history.jsonl", 1)),
+            lambda r, info: self.resume_status(r, info)["tail"],
         )
+        self.bind("Run", "summaryMetrics", self.resume_summary)
         self.bind(
             "Run",
             "eventsTail",
@@ -357,6 +364,27 @@ class Protocol:
     def upsert(self, _, info, input):
         run, inserted = self.store.upsert(input)
         return {"bucket": self.run(run), "inserted": inserted}
+
+    def resume_status(self, run, info):
+        cache = info.context.setdefault("resume_status", {})
+        if run["id"] not in cache:
+            cache[run["id"]] = self.store.sessions.resume(run["id"])
+            status = cache[run["id"]]
+            log.info(
+                "RunResumeStatus run=%s historyLineCount=%s last_step=%s",
+                run["id"],
+                status["line_count"],
+                status["last_step"],
+            )
+        return cache[run["id"]]
+
+    def resume_summary(self, run, info):
+        summary = run["summaryMetrics"]
+        if info.operation.name and "resume" in info.operation.name.value.lower():
+            last = self.resume_status(run, info)["last_step"]
+            if last is not None:
+                summary = dumps({**decode(summary), "_step": last})
+        return summary
 
     def filtered_runs(self, project, filters=None):
         rows = self.store.list_runs(

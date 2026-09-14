@@ -16,6 +16,22 @@ from .store import clean, decode, dumps
 
 
 class Records:
+    @staticmethod
+    def sdk_identity(row, fallback):
+        if isinstance(row, dict) and "_step" in row and "_timestamp" in row:
+            return (
+                "sdk-event:"
+                + hashlib.sha256(
+                    json.dumps(
+                        clean(row),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode()
+                ).hexdigest()
+            )
+        return fallback
+
     def __init__(self, store):
         self.store = store
         with store.connect() as db:
@@ -142,14 +158,7 @@ class Records:
             # filestream offset, with JSON keys reordered. Preserve raw delivery
             # lines/cursors, but index that exact event once. Different values,
             # timestamps, steps or writer identities remain distinct records.
-            identity = (
-                "sdk-event:"
-                + hashlib.sha256(
-                    json.dumps(
-                        row, sort_keys=True, separators=(",", ":"), allow_nan=False
-                    ).encode()
-                ).hexdigest()
-            )
+            identity = self.sdk_identity(row, identity)
         step, timestamp = row.get("_step", fallback), row.get("_timestamp", time.time())
         if (
             isinstance(step, bool)
@@ -255,7 +264,7 @@ class Records:
             ).fetchone()[0]
             if axis == "_step":
                 rows = db.execute(
-                    "SELECT r.step AS x,a.value,a.timestamp,r.id,r.source FROM history_records r JOIN record_values a ON a.record=r.id WHERE "
+                    "SELECT r.step AS x,a.value,a.timestamp,r.id,r.source,r.session FROM history_records r JOIN record_values a ON a.record=r.id WHERE "
                     + where
                     + " ORDER BY r.step,r.id",
                     args,
@@ -274,7 +283,7 @@ class Records:
                 rows = db.execute(
                     "SELECT "
                     + axis_expression
-                    + " AS x,a.value,a.timestamp,r.id,r.source FROM history_records r JOIN record_values a ON a.record=r.id JOIN record_values b ON b.record=r.id AND b.key=? WHERE "
+                    + " AS x,a.value,a.timestamp,r.id,r.source,r.session FROM history_records r JOIN record_values a ON a.record=r.id JOIN record_values b ON b.record=r.id AND b.key=? WHERE "
                     + where
                     + " AND b.value IS NOT NULL"
                     + legacy_guard

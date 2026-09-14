@@ -37,6 +37,7 @@ def test_identity_isolation_revocation_and_sessions(accounts_app):
     ).json()
     uid = response["data"]["upsertBucket"]["bucket"]["id"]
     assert client.get(f"/api/runs/{uid}", headers=other).status_code == 403
+    assert client.get(f"/api/runs/{uid}/sessions", headers=other).status_code == 403
     assert (
         client.post(
             "/api/series", headers=other, json={"runs": [uid], "keys": ["loss"]}

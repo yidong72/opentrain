@@ -9,12 +9,26 @@ const metricView = {
 };
 
 function runSessions(run) {
-  const sessions = run.config?.tensorboard_import?.sessions;
+  const sessions = run.sessions ?? run.config?.tensorboard_import?.sessions;
   return (Array.isArray(sessions) ? sessions : []).map((session, i) => ({
     ...session,
     label: `S${i + 1}`,
     index: i,
   }));
+}
+
+function sessionStart(session, axis, series) {
+  if (series?.session_starts && session.source?.startsWith("sdk"))
+    return series.session_starts[session.id]?.x;
+  if (axis === "_timestamp") return session.first_wall_time ?? session.started;
+  if (axis === "_step") return session.first_step;
+  return session.axes?.[axis]?.first;
+}
+
+function sessionDescription(s) {
+  const start = s.started ?? s.first_wall_time;
+  const end = s.ended ?? s.last_wall_time;
+  return `${s.label} · ${s.source || "tensorboard"}${s.inferred ? " (inferred)" : ""} · ${s.state || "imported"}\n${Number.isFinite(start) ? new Date(start * 1000).toLocaleString() : "Unknown start"} — ${Number.isFinite(end) ? new Date(end * 1000).toLocaleString() : "end not recorded"}\nSDK/event steps ${format(s.first_step)}–${format(s.last_step)} · ${s.records ?? s.events ?? 0} records${s.exitcode != null ? ` · exit ${s.exitcode}` : ""}`;
 }
 
 function sessionForPoint(run, timestamp, sessions = runSessions(run)) {
@@ -63,21 +77,25 @@ function renderSessions(content, run) {
   content.append(
     el(
       "p",
-      `${sessions.length} recorded source sessions. New history preserves separate records across sessions; older TensorBoard imports may already be collapsed by step. Dashed chart markers indicate session starts, not deleted data.`,
+      `${sessions.length} recorded source sessions. ${run.session_caveat || "Inferred segments are not a complete count of training jobs."} Dashed chart markers indicate the first recorded point on the chosen axis.`,
       "session-note",
     ),
   );
   for (const s of sessions) {
     const item = el("article", undefined, "session-card");
-    item.append(el("strong", `${s.label} · ${s.directory.split("/").pop()}`));
     item.append(
       el(
-        "p",
-        s.first_step === null
-          ? "No scalar events recorded"
-          : `Steps ${format(s.first_step)}–${format(s.last_step)} · ${format(s.events)} scalar events`,
+        "strong",
+        `${s.label} · ${s.host || s.directory?.split("/").pop() || s.id || "Session"}`,
       ),
     );
+    item.append(el("p", sessionDescription(s)));
+    for (const [key, range] of Object.entries(s.axes || {}))
+      if (key.endsWith("global_step"))
+        item.append(
+          el("p", `${key}: ${format(range.first)}–${format(range.last)}`),
+        );
+    if (s.warning) item.append(el("p", s.warning, "session-note"));
     if (Number.isFinite(s.first_wall_time))
       item.append(
         el(
@@ -100,6 +118,7 @@ function initMetrics() {
   }
   let timer;
   $("#metric-search").oninput = () => {
+    state.sharedMetric = null;
     clearTimeout(timer);
     timer = setTimeout(() => renderCharts().catch(showError), 150);
   };
@@ -118,22 +137,32 @@ function initMetrics() {
 
 async function renderCharts() {
   // Filtering/pagination only navigate the run list; selection spans pages.
-  const selected = state.runs.filter((r) => state.selected.has(r.uid));
+  const selected = [...state.selected]
+    .map((uid) => state.runs.find((r) => r.uid === uid))
+    .filter(Boolean);
   $("#selection-count").textContent = `${selected.length} runs selected`;
   for (const id of ["chart-grid", "metric-toolbar", "comparison-legend"])
     $("#" + id).hidden = state.tab !== "charts";
   const search = $("#metric-search").value.trim().toLowerCase();
   const axis = $("#x-axis").value;
   const signature = JSON.stringify([
-    selected.map((r) => [r.uid, r.updated]),
+    selected.map((r) => r.uid),
     state.tab,
     search,
     axis,
+    state.sharedMetric,
     $("#show-sessions").checked,
   ]);
-  if (signature === metricView.signature) return;
+  if (
+    signature === metricView.signature &&
+    !(metricView.catalogEmpty && !search && selected.some((r) => r.has_metrics))
+  ) {
+    await refreshOpenPlots();
+    return;
+  }
   metricView.signature = signature;
   const generation = ++state.generation;
+  cancelLivePlots();
   metricView.observer?.disconnect();
   metricView.controller?.abort();
   metricView.controller = new AbortController();
@@ -160,7 +189,11 @@ async function renderCharts() {
     throw error;
   }
   if (generation !== state.generation) return;
-  const runs = displayed.map((r, i) => ({ ...r, config: details[i].config }));
+  const runs = displayed.map((r, i) => ({
+    ...r,
+    config: details[i].config,
+    sessions: details[i].sessions,
+  }));
   const usedColors = new Set();
   let colorsChanged = false;
   for (const run of runs) {
@@ -183,6 +216,7 @@ async function renderCharts() {
       ),
     ),
   ].sort();
+  metricView.catalogEmpty = keys.length === 0;
   for (const key of new Set(
     details.flatMap((d) =>
       d.keys.filter((k) => k.stream === "history").map((k) => k.key),
@@ -190,11 +224,16 @@ async function renderCharts() {
   ))
     if (![...$("#x-axis").options].some((o) => o.value === key))
       $("#x-axis").add(new Option(key, key));
-  const filtered = keys.filter((k) => k.toLowerCase().includes(search));
+  const filtered = keys.filter((k) =>
+    state.sharedMetric
+      ? k === state.sharedMetric
+      : k.toLowerCase().includes(search),
+  );
   $("#metric-count").textContent =
     `${filtered.length} of ${keys.length} metrics · charts load on demand`;
   for (const run of runs) {
     const item = el("button", undefined, "comparison-item");
+    item.dataset.uid = run.uid;
     const dot = el("i", undefined, "run-color");
     dot.style.background = color(run.uid);
     item.append(
@@ -234,9 +273,15 @@ async function renderCharts() {
   let timer,
     active = 0;
   const cacheKey = (run, key) =>
-    JSON.stringify([run.uid, run.updated, key, axis]);
+    JSON.stringify([
+      run.uid,
+      run.updated,
+      key,
+      plotPreference(key).axis || axis,
+    ]);
   function paint(slot) {
     const key = slot.dataset.metric;
+    const selectedAxis = plotPreference(key).axis || axis;
     const series = runs.map((run) => ({
       run,
       ...metricView.cache.get(cacheKey(run, key)),
@@ -245,22 +290,32 @@ async function renderCharts() {
       ...new Set(
         series
           .filter((s) => s.total || s.missing_axis)
-          .map((s) => s.axis || axis),
+          .map((s) => s.axis || selectedAxis),
       ),
     ];
-    if (axis === "auto" && resolved.length > 1) {
-      slot.replaceChildren(
-        el("strong", key),
+    if (selectedAxis === "auto" && resolved.length > 1) {
+      const card = chart(
+        key,
+        series.map((s) => ({ ...s, points: [] })),
+        "auto",
+      );
+      card.append(
         el(
           "p",
-          `Runs define different axes (${resolved.join(", ")}). Select an explicit X axis to compare them.`,
+          `Runs define different axes (${resolved.join(", ")}). Select an explicit X axis on this plot to compare them.`,
         ),
       );
+      slot.replaceWith(card);
       return;
     }
     slot.replaceWith(
-      chart(key, series, axis === "auto" ? resolved[0] || "_step" : axis),
+      chart(
+        key,
+        series,
+        selectedAxis === "auto" ? resolved[0] || "_step" : selectedAxis,
+      ),
     );
+    scheduleLivePlots();
   }
   async function load(slots) {
     const missing = slots.filter((slot) =>
@@ -276,7 +331,7 @@ async function renderCharts() {
         body: JSON.stringify({
           runs: runs.map((r) => r.uid),
           keys,
-          x: axis,
+          x: plotPreference(keys[0]).axis || axis,
           limit: 800,
         }),
       });
@@ -296,7 +351,14 @@ async function renderCharts() {
   function pump() {
     if (generation !== state.generation) return;
     while (active < 3 && pending.size) {
-      const slots = [...pending].slice(0, 6);
+      const first = pending.values().next().value;
+      const selectedAxis = plotPreference(first.dataset.metric).axis || axis;
+      const slots = [...pending]
+        .filter(
+          (slot) =>
+            (plotPreference(slot.dataset.metric).axis || axis) === selectedAxis,
+        )
+        .slice(0, 6);
       slots.forEach((slot) => pending.delete(slot));
       active++;
       load(slots)
@@ -368,6 +430,7 @@ async function renderCharts() {
       );
       group.append(heading, build(child, next));
       group.addEventListener("toggle", () => {
+        if (group.open) scheduleLivePlots();
         if (!search && generation === state.generation) {
           metricView.open.set(id, group.open);
           try {

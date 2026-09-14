@@ -80,6 +80,17 @@ def test_empty_run_has_valid_resume_status(client):
     assert '"t"' in bucket["wandbConfig"]
 
 
+def test_lightweight_sessions_endpoint(client):
+    uid = client.app.state.store.upsert({"name": "session-poll"})[0]["uid"]
+    assert client.get(f"/api/runs/{uid}/sessions").status_code == 401
+    headers = {"Authorization": "Bearer secret"}
+    assert client.get(f"/api/runs/{uid}/sessions", headers=headers).json() == {
+        "sessions": [],
+        "session_count": 0,
+    }
+    assert client.get("/api/runs/missing/sessions", headers=headers).status_code == 404
+
+
 def test_batched_series_and_compact_runs(client):
     import json
 

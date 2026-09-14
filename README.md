@@ -2,6 +2,9 @@
 
 History integrity, custom axes, reversible cleanup, and partial offline recovery are documented in [History recovery](docs/history-recovery.md).
 
+The dashboard includes a visible project switcher, independent per-plot X axes,
+permission-preserving share links, and PNG export. See [Projects and sharing](docs/ui-sharing.md).
+
 An open-source, self-hosted experiment tracker that accepts the **official `wandb` Python client**. Set `WANDB_BASE_URL` and keep your training instrumentation.
 
 The server includes a live comparison dashboard, durable metrics/config/summary/file storage, checkpoint continuation, TensorBoard scalar import, grid/random sweeps, Google/GitHub accounts, per-user keys, shared-run ingestion, advanced table inspection, and versioned artifacts. Training data stays local; the dashboard needs no CDN. OAuth sign-in connects to the configured identity provider.
@@ -203,6 +206,6 @@ The development lock uses W&B 0.29.0; CI also tests 0.30.0. See [known 0.30 resu
 
 Architecture: FastAPI HTTP endpoints → a validated GraphQL schema / file-stream adapter → SQLite WAL plus content-addressed local blobs → a dependency-free browser dashboard. Run histories are preserved as received and numeric metrics are separately indexed. Unknown GraphQL fields produce explicit errors.
 
-`uv run python scripts/check_accounts_ui.py` checks account settings, key creation/revocation, and sign-out in Chromium using a disposable synthetic session. It does not substitute for live OAuth acceptance testing. The protocol suite currently contains 32 tests; dashboard and account browser checks are separate.
+`uv run python scripts/check_accounts_ui.py` checks account settings, key creation/revocation, and sign-out in Chromium using a disposable synthetic session. It does not substitute for live OAuth acceptance testing. CI also runs a dedicated Chromium job for project navigation, per-plot axes, sharing permissions, and PNG export; see [browser test instructions](docs/ui-sharing.md).
 
 Apache-2.0 licensed. Independently implemented; not affiliated with Weights & Biases. Protocol references: [W&B open-source client](https://github.com/wandb/wandb), [resume documentation](https://docs.wandb.ai/models/runs/resuming), and [TensorBoard](https://github.com/tensorflow/tensorboard).

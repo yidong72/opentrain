@@ -20,7 +20,7 @@ dependencies = [
 open-train = "open_train.cli:main"
 
 [project.optional-dependencies]
-client = ["wandb>=0.29,<0.31"]
+client = ["wandb>=0.28.2,<0.31"]
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1", "wandb==0.29.0", "playwright>=1.50,<2", "pillow>=11"]

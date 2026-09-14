@@ -36,6 +36,11 @@ assert Path(f.name).read_text() == "checkpoint payload"
         f"{server['url']}/api/runs/{run['uid']}/series", params={"key": "loss"}
     ).json()["points"]
     assert len(points) == 8
+    detail = httpx.get(f"{server['url']}/api/runs/{run['uid']}").json()
+    assert detail["session_count"] == 2, detail["sessions"]
+    assert [s["records"] for s in detail["sessions"]] == [5, 3]
+    assert all(s["evidence"] == "sdk_writer_metadata" for s in detail["sessions"])
+    assert all(s["state"] == "finished" for s in detail["sessions"])
 
 
 @pytest.mark.integration

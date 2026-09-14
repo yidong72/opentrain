@@ -92,6 +92,9 @@ class Store:
         from .records import Records
 
         self.records = Records(self)
+        from .sessions import Sessions
+
+        self.sessions = Sessions(self)
 
     @contextmanager
     def connect(self, write=False):
@@ -197,7 +200,8 @@ class Store:
                     run[column] = data[incoming]
             if data.get("config") is not None:
                 config = decode(run["config"])
-                config.update(decode(data["config"]))
+                incoming = decode(data["config"])
+                config.update(incoming)
                 run["config"] = dumps(clean(config))
             if data.get("summaryMetrics") is not None:
                 run["summary"] = dumps(clean(decode(data["summaryMetrics"])))
@@ -226,6 +230,10 @@ class Store:
                     + " WHERE uid=?",
                     [run[k] for k in columns] + [run["uid"]],
                 )
+            self.sessions.capture(db, run["uid"], run["config"])
+            db.execute(
+                "INSERT OR IGNORE INTO sdk_session_migrations VALUES (?)", (run["uid"],)
+            )
             return run, inserted
 
     def list_runs(self, entity=None, project=None, limit=500, offset=0):
@@ -422,7 +430,7 @@ class Store:
                     )
                     if immutable:
                         row = decode(line)
-                        self.records.put(
+                        rid = self.records.put(
                             db,
                             uid,
                             "history" if "history" in filename else "system",
@@ -431,6 +439,14 @@ class Store:
                             index,
                             "sdk",
                             str(row.get("_writer", "sdk")),
+                        )
+                        self.sessions.attach(
+                            db,
+                            uid,
+                            "history" if "history" in filename else "system",
+                            index,
+                            rid,
+                            row,
                         )
                         self.add_metrics(
                             db,
@@ -448,6 +464,7 @@ class Store:
                 state = "preempting"
             if payload.get("complete"):
                 state = "finished" if payload.get("exitcode", 0) == 0 else "failed"
+                self.sessions.finish(db, uid, payload.get("exitcode", 0))
             db.execute(
                 "UPDATE runs SET summary=?,state=?,updated=?,exitcode=? WHERE uid=?",
                 (
@@ -468,7 +485,7 @@ class Store:
         key,
         stream="history",
         limit=1500,
-        x="_step",
+        x="auto",
         include_timestamps=False,
     ):
         run = self.assert_run(uid)
@@ -477,6 +494,20 @@ class Store:
         if x == "auto":
             x = axis_for(run["config"], key)
         rows, missing_axis = self.records.points(uid, key, stream, x)
+        # A session may log a setup-only global_step=0 without this metric.
+        # Use paired records for this plot, before sampling, not run-wide minima.
+        session_starts = {}
+        for row in rows:
+            sid = row["session"]
+            if (
+                sid
+                and row["value"] is not None
+                and (
+                    sid not in session_starts
+                    or row["timestamp"] < session_starts[sid]["timestamp"]
+                )
+            ):
+                session_starts[sid] = {"x": row["x"], "timestamp": row["timestamp"]}
         points = [[r["x"], r["value"], r["timestamp"]] for r in rows]
         # Min/max buckets preserve spikes as well as endpoints while bounding response size.
         if len(points) > limit:
@@ -498,6 +529,7 @@ class Store:
             "total": len(rows),
             "sampled": len(points) < len(rows),
             "axis": x,
+            "session_starts": session_starts,
             "missing_axis": missing_axis,
             "join": "record_identity",
             "legacy_projection_points": sum(

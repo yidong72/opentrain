@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        wandb: ["0.29.0", "0.30.0"]
+        wandb: ["0.28.2", "0.29.0", "0.30.0"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -13,3 +13,13 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run --with wandb==${{ matrix.wandb }} pytest
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --python 3.12
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest tests/test_workspace_ui.py tests/test_live_ui.py -q
+        env:
+          OPEN_TRAIN_BROWSER_TESTS: "1"

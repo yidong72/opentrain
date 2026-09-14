@@ -939,7 +939,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "tensorboard", specifier = ">=2.18,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
-    { name = "wandb", marker = "extra == 'client'", specifier = ">=0.29,<0.31" },
+    { name = "wandb", marker = "extra == 'client'", specifier = ">=0.28.2,<0.31" },
 ]
 provides-extras = ["client"]
 

@@ -44,7 +44,7 @@ class TBImport(BaseModel):
 class SeriesBatch(BaseModel):
     runs: list[str] = Field(min_length=1, max_length=12)
     keys: list[str] = Field(min_length=1, max_length=12)
-    x: str = "_step"
+    x: str = "auto"
     limit: int = Field(default=800, ge=10, le=1500)
 
 
@@ -355,6 +355,7 @@ def create_app(data_dir=None, token=None, public_url=None):
             "summary": decode(row["summary"]),
             "tags": decode(row["tags"]),
             "metric_axes": metric_axes(row["config"]),
+            "session_count": store.sessions.count(row["uid"], row["config"]),
         }
 
     @app.get("/api/runs")
@@ -369,13 +370,6 @@ def create_app(data_dir=None, token=None, public_url=None):
         result = [run_json(r) for r in rows[:limit]]
         if compact:
             for run in result:
-                provenance = run["config"].get("tensorboard_import")
-                sessions = (
-                    provenance.get("sessions") if isinstance(provenance, dict) else None
-                )
-                run["session_count"] = (
-                    len(sessions) if isinstance(sessions, list) else 0
-                )
                 run["has_metrics"] = any(
                     not key.startswith("_") and isinstance(value, (int, float))
                     for key, value in run["summary"].items()
@@ -424,6 +418,8 @@ def create_app(data_dir=None, token=None, public_url=None):
         return {
             **run_json(row),
             "ingestion": store.records.imports(uid),
+            "sessions": store.sessions.list(uid),
+            "session_caveat": "SDK writer metadata identifies processes. Inferred historical segments are lower-bound provenance, not a complete count of Slurm jobs. An ended session is not proof of a training failure.",
             "keys": store.keys(uid),
             "files": [
                 {**f, "url": file_url(request, uid, f["name"])}
@@ -431,12 +427,20 @@ def create_app(data_dir=None, token=None, public_url=None):
             ],
         }
 
+    @app.get("/api/runs/{uid}/sessions")
+    def run_sessions(uid: str):
+        if not store.get(uid=uid):
+            raise HTTPException(404, "Run not found")
+        # Live charts need provenance, not the large config/file/metric catalogs.
+        sessions = store.sessions.list(uid)
+        return {"sessions": sessions, "session_count": len(sessions)}
+
     @app.get("/api/runs/{uid}/series")
     def series(
         uid: str,
         key: str,
         stream: str = "history",
-        x: str = "_step",
+        x: str = "auto",
         limit: int = Query(1500, ge=10, le=10000),
     ):
         if not store.get(uid=uid):

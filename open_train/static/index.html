@@ -4,10 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260912-history1" />
-    <script src="/static/metrics.js?v=20260912-history1" defer></script>
-    <script src="/static/app.js?v=20260912-history1" defer></script>
-    <script src="/static/account.js?v=20260912-history1" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260914-live1" />
+    <script src="/static/metrics.js?v=20260914-live1" defer></script>
+    <script src="/static/workspace.js?v=20260914-live1" defer></script>
+    <script src="/static/live.js?v=20260914-live1" defer></script>
+    <script src="/static/app.js?v=20260914-live1" defer></script>
+    <script src="/static/account.js?v=20260914-live1" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -29,6 +31,12 @@
         <span>↗</span> Connect a client
       </button>
       <section id="run-sidebar" aria-label="Run selection">
+        <label class="project-switcher"
+          >Project
+          <select id="project-filter" aria-label="Project">
+            <option value="">All projects</option>
+          </select>
+        </label>
         <div class="run-panel-title">
           <h2>Runs <span id="run-count" class="pill">0</span></h2>
           <button id="clear-selection">Clear selection</button>
@@ -43,11 +51,6 @@
         /></label>
         <details class="run-filters">
           <summary>Filter runs <span id="filter-count"></span></summary>
-          <label
-            >Project<select id="project-filter" aria-label="Project">
-              <option value="">All projects</option>
-            </select></label
-          >
           <label
             >Status<select id="state-filter" aria-label="Run status">
               <option value="">All statuses</option>
@@ -163,6 +166,7 @@
           </p>
           <button class="primary" id="empty-connect">Connect a client ↗</button>
         </div>
+        <p id="shared-view-notice" class="muted" role="status" hidden></p>
         <div id="data-view">
           <div class="compare-bar">
             <div>
@@ -174,7 +178,7 @@
             </div>
             <div>
               <label
-                >X axis
+                >Default X axis
                 <select id="x-axis">
                   <option value="auto">Auto (metric definition)</option>
                   <option value="_step">Logging step</option>
@@ -182,6 +186,7 @@
                   <option value="_runtime">Runtime</option>
                 </select></label
               >
+              <button id="share-view">Share view</button>
             </div>
           </div>
           <div id="metric-toolbar" class="metric-toolbar">

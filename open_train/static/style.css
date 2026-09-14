@@ -1228,6 +1228,32 @@ input:disabled {
   min-width: 24px;
   font-variant-numeric: tabular-nums;
 }
+.project-switcher {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.project-switcher select {
+  width: 100%;
+  min-width: 0;
+}
+.plot-controls select {
+  max-width: 170px;
+  min-width: 0;
+  padding: 4px;
+  font-size: 11px;
+}
+.share-dialog {
+  width: min(640px, 94vw);
+}
+.share-dialog textarea {
+  width: 100%;
+  height: 110px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
 .plot-controls button {
   padding: 3px 8px;
   font-size: 12px;
