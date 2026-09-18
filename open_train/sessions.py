@@ -253,7 +253,7 @@ class Sessions:
             else []
         )
 
-    def list(self, uid):
+    def list(self, uid, compact=False):
         run = self.store.assert_run(uid)
         with self.store.connect() as db:
             rows = [
@@ -283,17 +283,48 @@ class Sessions:
                     }
                     for r in shared
                 ]
+            # Aggregate once per run, not once per resumed job. System rows can
+            # greatly outnumber history rows and must not join the value table.
+            stats = {
+                r["session"]: dict(r)
+                for r in db.execute(
+                    "SELECT session,COUNT(*) records,MIN(step) first_step,MAX(step) last_step,MIN(timestamp) first_wall_time,MAX(timestamp) last_wall_time,SUM(active=1 AND superseded=0) active_records FROM history_records WHERE run=? AND stream='history' GROUP BY session",
+                    (uid,),
+                )
+            }
+            system_counts = dict(
+                db.execute(
+                    "SELECT session,COUNT(*) FROM history_records WHERE run=? AND stream='system' GROUP BY session",
+                    (uid,),
+                )
+            )
+            axes = {}
+            if not compact and rows:
+                for r in db.execute(
+                    "SELECT r.session,v.key,MIN(v.value) first,MAX(v.value) last FROM history_records r JOIN record_values v ON v.record=r.id WHERE r.run=? AND r.stream='history' AND r.active=1 AND r.superseded=0 GROUP BY r.session,v.key",
+                    (uid,),
+                ):
+                    axes.setdefault(r["session"], {})[r["key"]] = {
+                        "first": r["first"],
+                        "last": r["last"],
+                    }
             for s in rows:
-                stats = db.execute(
-                    "SELECT COUNT(*) records,MIN(step) first_step,MAX(step) last_step,MIN(timestamp) first_wall_time,MAX(timestamp) last_wall_time,COALESCE(SUM(active=1 AND superseded=0),0) active_records FROM history_records WHERE run=? AND session=? AND stream='history'",
-                    (uid, s["id"]),
-                ).fetchone()
-                s.update(dict(stats))
+                s.update(
+                    stats.get(
+                        s["id"],
+                        dict(
+                            records=0,
+                            first_step=None,
+                            last_step=None,
+                            first_wall_time=None,
+                            last_wall_time=None,
+                            active_records=0,
+                        ),
+                    )
+                )
+                s.pop("session", None)
                 s["source"] = "sdk_shared" if shared else "sdk"
-                s["system_records"] = db.execute(
-                    "SELECT COUNT(*) FROM history_records WHERE run=? AND session=? AND stream='system'",
-                    (uid, s["id"]),
-                ).fetchone()[0]
+                s["system_records"] = system_counts.get(s["id"], 0)
                 s["warning"] = (
                     "System telemetry received, but no training history was received for this session."
                     if not s["records"] and s["system_records"]
@@ -305,13 +336,7 @@ class Sessions:
                     if s["end_reason"] == "complete" and s["exitcode"] is not None
                     else ("ended" if s["ended"] is not None else "open")
                 )
-                s["axes"] = {
-                    r["key"]: {"first": r["first"], "last": r["last"]}
-                    for r in db.execute(
-                        "SELECT v.key,MIN(v.value) first,MAX(v.value) last FROM history_records r JOIN record_values v ON v.record=r.id WHERE r.run=? AND r.session=? AND r.stream='history' AND r.active=1 AND r.superseded=0 GROUP BY v.key",
-                        (uid, s["id"]),
-                    )
-                }
+                s["axes"] = axes.get(s["id"], {})
                 s.pop("run", None)
         rows.extend(
             {

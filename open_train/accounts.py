@@ -373,6 +373,25 @@ def install_accounts(app, accounts, public_url, enabled):
             raise HTTPException(404, "Key not found")
         return {"ok": True}
 
+    @router.get("/workspaces/{entity}/members")
+    def members(entity: str, request: Request):
+        current = user(request)
+        with accounts.store.connect() as db:
+            role = db.execute(
+                "SELECT role FROM memberships WHERE entity=? AND user=?",
+                (entity, current["id"]),
+            ).fetchone()
+            if not current["admin"] and (not role or role[0] != "owner"):
+                raise HTTPException(403, "Workspace owner required")
+            roster = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT u.username,u.name,m.role FROM memberships m JOIN users u ON u.id=m.user WHERE m.entity=? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'writer' THEN 1 ELSE 2 END,u.username",
+                    (entity,),
+                )
+            ]
+        return {"entity": entity, "members": roster}
+
     @router.post("/workspaces/{entity}/members")
     def member(entity: str, body: MemberRequest, request: Request):
         current = user(request, True)

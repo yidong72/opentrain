@@ -182,13 +182,6 @@ async function refresh({ layout = false } = {}) {
           r.project === path[2] &&
           r.name === path[4],
       );
-      const metricRuns = runs.filter(
-        (r) =>
-          r.has_metrics ||
-          Object.entries(r.summary).some(
-            ([key, value]) => !key.startsWith("_") && typeof value === "number",
-          ),
-      );
       const projectPath =
         path.length === 3 && path[1] && path[2]
           ? `${decodeURIComponent(path[1])}/${decodeURIComponent(path[2])}`
@@ -198,14 +191,8 @@ async function refresh({ layout = false } = {}) {
         [...$("#project-filter").options].some((o) => o.value === projectPath)
       )
         $("#project-filter").value = projectPath;
-      for (const r of target
-        ? [target]
-        : (metricRuns.length ? metricRuns : runs)
-            .filter(
-              (r) => !projectPath || `${r.entity}/${r.project}` === projectPath,
-            )
-            .slice(0, 3))
-        state.selected.add(r.uid);
+      // Only explicit run links or shared views select runs on navigation.
+      if (target) state.selected.add(target.uid);
       if (state.sharedView) restoreSharedView();
       state.initialized = true;
       if (target) openDetail(target.uid);
@@ -254,7 +241,7 @@ function renderRuns({ live = false } = {}) {
       const badge = $(".badge", tr);
       badge.textContent = r.state;
       badge.className = `badge ${r.state}`;
-      $(".run-step", tr).textContent = `Step ${format(r.summary._step)}`;
+      updateRunStep($(".run-step", tr), r);
       $("small.run-meta", tr).textContent =
         `${r.project} · ${r.source === "tensorboard" ? "TensorBoard" : "W&B SDK"} · ${age(r.updated)}`;
       const button = $(".run-name", tr);
@@ -312,10 +299,9 @@ function renderRuns({ live = false } = {}) {
       name.append(sessions);
     }
     const meta = el("div", undefined, "run-meta");
-    meta.append(
-      el("span", r.state, `badge ${r.state}`),
-      el("span", `Step ${format(r.summary._step)}`, "run-step"),
-    );
+    const step = el("span", undefined, "run-step");
+    updateRunStep(step, r);
+    meta.append(el("span", r.state, `badge ${r.state}`), step);
     name.append(
       meta,
       el(
@@ -335,6 +321,19 @@ function renderRuns({ live = false } = {}) {
     !rows.length ||
     (state.selected.size >= 12 && !rows.some((r) => state.selected.has(r.uid)));
 }
+function updateRunStep(element, run) {
+  const summary = run.summary || {};
+  const axis = ["train/global_step", "global_step"].find((key) =>
+    Number.isFinite(summary[key]),
+  );
+  element.textContent = axis
+    ? `${axis === "train/global_step" ? "Train step" : "Step"} ${format(summary[axis])}`
+    : `Log step ${format(summary._step)}`;
+  element.title = axis
+    ? `${axis}: ${format(summary[axis])} · W&B logging step: ${format(summary._step)}`
+    : "W&B logging counter; no training-step metric was recorded.";
+}
+
 async function detail(uid) {
   const revision = state.runs.find((r) => r.uid === uid)?.updated;
   let cached = state.details.get(uid);
@@ -559,6 +558,11 @@ function chart(key, series, axis, expanded = false) {
     $("small", heading).textContent = series.some((s) => s.sampled)
       ? "Sampled · min/max"
       : "All points";
+    if (series.some((s) => s.axis_source === "paired_global_step")) {
+      $("small", heading).textContent += ` · Auto: ${axis}`;
+      $("small", heading).title =
+        "No saved metric-axis definition; using the global_step recorded alongside this metric. Logging steps are available in the X axis menu.";
+    } else $("small", heading).title = "";
     const missingAxis = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
     const mixed =
       axis === "auto" &&

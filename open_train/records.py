@@ -292,16 +292,38 @@ class Records:
                 ).fetchall()
         return rows, count - len(rows)
 
-    def keys(self, uid):
+    def keys(self, uid, stream=None):
         self.store.assert_run(uid)
         with self.store.connect() as db:
             return [
                 dict(r)
                 for r in db.execute(
-                    "SELECT r.stream,v.key,COUNT(*) AS count,MAX(r.step) AS last_step FROM history_records r JOIN record_values v ON v.record=r.id WHERE r.run=? AND r.active=1 AND r.superseded=0 GROUP BY r.stream,v.key ORDER BY v.key",
-                    (uid,),
+                    "SELECT r.stream,v.key,COUNT(*) AS count,MAX(r.step) AS last_step FROM history_records r JOIN record_values v ON v.record=r.id WHERE r.run=? AND r.active=1 AND r.superseded=0"
+                    + (" AND r.stream=?" if stream else "")
+                    + " GROUP BY r.stream,v.key ORDER BY v.key",
+                    (uid, stream) if stream else (uid,),
                 )
             ]
+
+    def inferred_axis(self, uid, key, stream):
+        # Historical resumes could lose metric definitions. Only use an actual
+        # namespaced counter paired with this metric in the SAME record. Never
+        # guess from logging offsets, timestamps or a different namespace.
+        parts = key.split("/")[:-1]
+        candidates = [
+            "/".join(parts[:i] + ["global_step"]) for i in range(len(parts), 0, -1)
+        ]
+        with self.store.connect() as db:
+            for axis in candidates:
+                if (
+                    axis != key
+                    and db.execute(
+                        "SELECT 1 FROM history_records r JOIN record_values a ON a.record=r.id AND a.key=? JOIN record_values b ON b.record=r.id AND b.key=? WHERE r.run=? AND r.stream=? AND r.active=1 AND r.superseded=0 AND b.value IS NOT NULL AND (r.source!='legacy_tensorboard' OR a.timestamp=b.timestamp) LIMIT 1",
+                        (key, axis, uid, stream),
+                    ).fetchone()
+                ):
+                    return axis
+        return "_step"
 
     def rebuild_summary(self, db, uid):
         summary = {}
@@ -567,9 +589,56 @@ def metric_axes(config):
     return axes
 
 
-def axis_for(config, key):
+def axis_for(config, key, default="_step"):
     axes = metric_axes(config)
     return axes.get(key) or next(
         (axis for pattern, axis in axes.items() if fnmatch.fnmatchcase(key, pattern)),
-        "_step",
+        default,
     )
+
+
+def merge_config(previous, incoming):
+    """Preserve other sessions' metric definitions without rebasing SDK indexes.
+
+    Incoming definitions keep their original order/indexes. Retained definitions
+    are appended with named axes resolved against their OLD definition table.
+    Ordinary user config and the current writer metadata retain update semantics.
+    """
+    result = {**previous, **incoming}
+    if "_wandb" not in incoming:
+        return result
+    old = previous.get("_wandb", {})
+    new = incoming["_wandb"]
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return result
+    old = old.get("value", old)
+    value = new.get("value", new)
+    if not isinstance(old, dict) or not isinstance(value, dict):
+        return result
+    value = {**old, **value}
+    definitions = value.get("m", [])
+    if not isinstance(definitions, list) or not isinstance(old.get("m", []), list):
+        return result
+
+    def name(d):
+        return d.get("1") or d.get("name") or d.get("2") or d.get("glob_name")
+
+    names = {name(d) for d in definitions if isinstance(d, dict)}
+    axes = metric_axes({"_wandb": old})
+    retained = []
+    for definition in old.get("m", []):
+        if (
+            not isinstance(definition, dict)
+            or not name(definition)
+            or name(definition) in names
+        ):
+            continue
+        d = dict(definition)
+        d.pop("5", None)
+        d.pop("step_metric_index", None)
+        if name(d) in axes:
+            d["4"] = axes[name(d)]
+        retained.append(d)
+    value["m"] = definitions + retained
+    result["_wandb"] = {**new, "value": value} if "value" in new else value
+    return result

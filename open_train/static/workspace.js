@@ -99,13 +99,6 @@ function initWorkspace() {
     for (const id of ["search", "state-filter", "source-filter"])
       $("#" + id).value = "";
     $("#selected-filter").checked = false;
-    for (const r of state.runs
-      .filter(
-        (r) =>
-          (!project || `${r.entity}/${r.project}` === project) && r.has_metrics,
-      )
-      .slice(0, 3))
-      state.selected.add(r.uid);
     const slash = project.indexOf("/");
     history.replaceState(
       null,
@@ -263,9 +256,9 @@ async function loadPlot(key) {
       limit: 800,
     }),
   });
-  const details = await Promise.all(selected.map((r) => detail(r.uid)));
+  const details = await Promise.all(selected.map((r) => plotDetail(r.uid)));
   const series = selected.map((r, i) => ({
-    run: { ...r, config: details[i].config, sessions: details[i].sessions },
+    run: { ...r, sessions: details[i].sessions },
     ...response.series[r.uid][key],
   }));
   const axes = [

@@ -205,6 +205,80 @@ def test_default_metric_axis_definition_with_sdk_indexes(tmp_path):
     assert store.series(uid, "loss", x="_step")["points"] == [[0, 0.5]]
 
 
+def test_resumed_config_preserves_axes_without_corrupting_sdk_indexes(tmp_path):
+    store = Store(tmp_path)
+    uid = make_run(store)
+
+    def update(definitions):
+        store.upsert({"id": uid, "config": {"_wandb": {"value": {"m": definitions}}}})
+
+    update([{"1": "eval/global_step"}, {"1": "eval/score", "5": 1}])
+    # A new SDK process sends a different definition list with index 1 reused.
+    update([{"1": "train/global_step"}, {"1": "train/loss", "5": 1}])
+    assert metric_axes(store.get(uid=uid)["config"]) == {
+        "train/loss": "train/global_step",
+        "eval/score": "eval/global_step",
+    }
+    update([{"1": "epoch"}, {"1": "other", "5": 1}])
+    axes = metric_axes(store.get(uid=uid)["config"])
+    assert axes["eval/score"] == "eval/global_step"
+    assert axes["train/loss"] == "train/global_step"
+    assert axes["other"] == "epoch"
+    # Metadata-only upserts must also keep definitions, but new definitions win.
+    store.upsert({"id": uid, "config": {"_wandb": {"value": {"cli_version": "test"}}}})
+    assert metric_axes(store.get(uid=uid)["config"]) == axes
+    update([{"1": "eval/score", "4": "_step"}])
+    assert metric_axes(store.get(uid=uid)["config"])["eval/score"] == "_step"
+
+
+def test_auto_axis_recovers_paired_eval_steps_without_rewriting_history(tmp_path):
+    store = Store(tmp_path)
+    uid = make_run(store)
+    rows = [
+        {
+            "_step": 2545,
+            "_timestamp": 100,
+            "eval/global_step": 1180,
+            "eval/tasks/pass1": 0.35,
+        },
+        {
+            "_step": 2546,
+            "_timestamp": 101,
+            "train/global_step": 1181,
+            "train/loss": 0.5,
+        },
+        {
+            "_step": 2547,
+            "_timestamp": 102,
+            "train/global_step": 1182,
+            "eval/unpaired": 0.4,
+        },
+        {"_step": 2548, "_timestamp": 103, "eval/tasks/pass1": 0.45},
+    ]
+    send(store, uid, rows)
+    result = store.series(uid, "eval/tasks/pass1")
+    assert result["axis"] == "eval/global_step"
+    assert result["axis_source"] == "paired_global_step"
+    assert result["points"] == [[1180, 0.35]] and result["missing_axis"] == 1
+    assert store.series(uid, "eval/tasks/pass1", x="_step")["points"] == [
+        [2545, 0.35],
+        [2548, 0.45],
+    ]
+    assert store.series(uid, "train/loss")["points"] == [[1181, 0.5]]
+    assert store.series(uid, "eval/unpaired")["axis"] == "_step"
+    assert store.history(uid) == rows
+    assert store.count(uid, "wandb-history.jsonl") == 4
+    assert store.sessions.resume(uid)["last_step"] == 2548
+    store.upsert(
+        {
+            "id": uid,
+            "config": {"_wandb": {"value": {"m": [{"2": "eval/*", "4": "_step"}]}}},
+        }
+    )
+    assert store.series(uid, "eval/tasks/pass1")["axis_source"] == "metric_definition"
+    assert store.series(uid, "eval/tasks/pass1")["axis"] == "_step"
+
+
 def test_delete_restore_and_reuse_name(tmp_path):
     store = Store(tmp_path)
     uid = make_run(store)
@@ -335,6 +409,32 @@ r.delete()
 assert httpx.get(base + "/api/runs/" + r.storage_id).status_code == 404
 assert httpx.post(base + "/api/runs/" + r.storage_id + "/restore", json={"confirm":True}).status_code == 200
 assert len(list(wandb.Api().run("local/recovery-sdk/axis-delete").scan_history())) == 1
+""")
+
+
+def test_official_sdk_resume_keeps_previous_eval_axis(sdk):
+    sdk("""
+import wandb
+with wandb.init(project="axis-resume", id="same-run", settings=wandb.Settings(x_disable_stats=True)) as run:
+    run.define_metric("eval/global_step")
+    run.define_metric("eval/score", step_metric="eval/global_step")
+    run.log({"eval/global_step": 20, "eval/score": 0.5})
+""")
+    sdk("""
+import wandb, httpx, os
+with wandb.init(project="axis-resume", id="same-run", resume="must", settings=wandb.Settings(x_disable_stats=True)) as run:
+    assert run.resumed
+    run.define_metric("train/global_step")
+    run.define_metric("train/loss", step_metric="train/global_step")
+    run.log({"train/global_step": 21, "train/loss": 0.3})
+r = wandb.Api().run("local/axis-resume/same-run")
+base = os.environ["WANDB_BASE_URL"] + "/api/runs/" + r.storage_id
+detail = httpx.get(base).json()
+assert detail["metric_axes"]["eval/score"] == "eval/global_step", detail["metric_axes"]
+assert detail["metric_axes"]["train/loss"] == "train/global_step", detail["metric_axes"]
+assert httpx.get(base + "/series", params={"key":"eval/score"}).json()["points"] == [[20, 0.5]]
+assert httpx.get(base + "/series", params={"key":"train/loss"}).json()["points"] == [[21, 0.3]]
+assert len(detail["sessions"]) == 2
 """)
 
 

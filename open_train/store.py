@@ -199,9 +199,11 @@ class Store:
                 if data.get(incoming) is not None:
                     run[column] = data[incoming]
             if data.get("config") is not None:
+                from .records import merge_config
+
                 config = decode(run["config"])
                 incoming = decode(data["config"])
-                config.update(incoming)
+                config = merge_config(config, incoming)
                 run["config"] = dumps(clean(config))
             if data.get("summaryMetrics") is not None:
                 run["summary"] = dumps(clean(decode(data["summaryMetrics"])))
@@ -491,8 +493,13 @@ class Store:
         run = self.assert_run(uid)
         from .records import axis_for
 
+        axis_source = "explicit"
         if x == "auto":
-            x = axis_for(run["config"], key)
+            x = axis_for(run["config"], key, default=None)
+            axis_source = "metric_definition"
+            if x is None:
+                x = self.records.inferred_axis(uid, key, stream)
+                axis_source = "paired_global_step" if x != "_step" else "logging_step"
         rows, missing_axis = self.records.points(uid, key, stream, x)
         # A session may log a setup-only global_step=0 without this metric.
         # Use paired records for this plot, before sampling, not run-wide minima.
@@ -529,6 +536,7 @@ class Store:
             "total": len(rows),
             "sampled": len(points) < len(rows),
             "axis": x,
+            "axis_source": axis_source,
             "session_starts": session_starts,
             "missing_axis": missing_axis,
             "join": "record_identity",

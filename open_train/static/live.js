@@ -62,7 +62,9 @@ async function refreshOpenPlots() {
       await Promise.all(
         ids.map(async (uid) => [
           uid,
-          await api(`/api/runs/${uid}/sessions`, { signal: controller.signal }),
+          await api(`/api/runs/${uid}/sessions?compact=true`, {
+            signal: controller.signal,
+          }),
         ]),
       ),
     );

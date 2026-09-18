@@ -374,7 +374,14 @@ def create_app(data_dir=None, token=None, public_url=None):
                     not key.startswith("_") and isinstance(value, (int, float))
                     for key, value in run["summary"].items()
                 )
-                run["summary"] = {"_step": run["summary"].get("_step")}
+                run["summary"] = {
+                    "_step": run["summary"].get("_step"),
+                    **{
+                        key: run["summary"][key]
+                        for key in ("train/global_step", "global_step")
+                        if key in run["summary"]
+                    },
+                }
                 run.pop("config")
                 run.pop("notes")
         return {
@@ -427,12 +434,22 @@ def create_app(data_dir=None, token=None, public_url=None):
             ],
         }
 
+    @app.get("/api/runs/{uid}/plots")
+    def run_plots(uid: str):
+        if not store.get(uid=uid):
+            raise HTTPException(404, "Run not found")
+        # Chart startup must not enumerate files, imports or system telemetry.
+        return {
+            "keys": store.records.keys(uid, stream="history"),
+            "sessions": store.sessions.list(uid, compact=True),
+        }
+
     @app.get("/api/runs/{uid}/sessions")
-    def run_sessions(uid: str):
+    def run_sessions(uid: str, compact: bool = False):
         if not store.get(uid=uid):
             raise HTTPException(404, "Run not found")
         # Live charts need provenance, not the large config/file/metric catalogs.
-        sessions = store.sessions.list(uid)
+        sessions = store.sessions.list(uid, compact=compact)
         return {"sessions": sessions, "session_count": len(sessions)}
 
     @app.get("/api/runs/{uid}/series")

@@ -4,12 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260914-live1" />
-    <script src="/static/metrics.js?v=20260914-live1" defer></script>
-    <script src="/static/workspace.js?v=20260914-live1" defer></script>
-    <script src="/static/live.js?v=20260914-live1" defer></script>
-    <script src="/static/app.js?v=20260914-live1" defer></script>
-    <script src="/static/account.js?v=20260914-live1" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260918-sidebar1" />
+    <script src="/static/metrics.js?v=20260918-sidebar1" defer></script>
+    <script src="/static/workspace.js?v=20260918-sidebar1" defer></script>
+    <script src="/static/live.js?v=20260918-sidebar1" defer></script>
+    <script src="/static/app.js?v=20260918-sidebar1" defer></script>
+    <script src="/static/account.js?v=20260918-sidebar1" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -233,8 +233,7 @@
 import wandb
 
 with wandb.init(project="my-project") as run:
-    run.log({"loss": 0.42, "accuracy": 0.91})</pre
-            >
+    run.log({"loss": 0.42, "accuracy": 0.91})</pre>
           </article>
           <article class="setup-card">
             <span class="pill">02 · TensorBoard</span>
@@ -245,8 +244,7 @@ with wandb.init(project="my-project") as run:
             </p>
             <pre>
 open-train import-tensorboard ./logs \
-  --project my-project --source experiment-1</pre
-            >
+  --project my-project --source experiment-1</pre>
             <h2>Continue after a checkpoint</h2>
             <p>
               Store the run ID with your checkpoint and reuse it on restart.
@@ -254,8 +252,7 @@ open-train import-tensorboard ./logs \
             <pre>
 wandb.init(project="my-project",
            id=checkpoint["wandb_run_id"],
-           resume="must")</pre
-            >
+           resume="must")</pre>
             <p>
               Use a custom <code>global_step</code> metric for checkpoint steps
               that may rewind.

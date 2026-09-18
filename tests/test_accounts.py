@@ -38,6 +38,11 @@ def test_identity_isolation_revocation_and_sessions(accounts_app):
     uid = response["data"]["upsertBucket"]["bucket"]["id"]
     assert client.get(f"/api/runs/{uid}", headers=other).status_code == 403
     assert client.get(f"/api/runs/{uid}/sessions", headers=other).status_code == 403
+    assert client.get(f"/api/runs/{uid}/plots", headers=other).status_code == 403
+    assert (
+        client.get(f"/api/runs/{uid}/sessions?compact=true", headers=other).status_code
+        == 403
+    )
     assert (
         client.post(
             "/api/series", headers=other, json={"runs": [uid], "keys": ["loss"]}
@@ -105,6 +110,20 @@ def test_reader_cannot_write(accounts_app):
         json={"username": bob["username"], "role": "reader"},
     )
     assert response.status_code == 200
+    roster_url = f"/auth/workspaces/{alice['username']}/members"
+    roster = client.get(roster_url).json()
+    assert roster == {
+        "entity": alice["username"],
+        "members": [
+            {"username": alice["username"], "name": alice["name"], "role": "owner"},
+            {"username": bob["username"], "name": bob["name"], "role": "reader"},
+        ],
+    }
+    assert client.get(roster_url, headers=headers).json() == roster
+    assert client.get(roster_url, headers=other).status_code == 403
+    stranger, stranger_headers = identity(accounts_app, "outsider")
+    assert client.get(roster_url, headers=stranger_headers).status_code == 403
+    assert TestClient(accounts_app).get(roster_url).status_code == 401
     assert (
         client.get(
             "/api/runs", headers=other, params={"entity": alice["username"]}

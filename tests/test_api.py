@@ -91,6 +91,42 @@ def test_lightweight_sessions_endpoint(client):
     assert client.get("/api/runs/missing/sessions", headers=headers).status_code == 404
 
 
+def test_plot_catalog_skips_files_imports_and_system_values(client, monkeypatch):
+    import json
+
+    store = client.app.state.store
+    uid = store.upsert({"name": "lightweight-plots"})[0]["uid"]
+    store.stream(
+        uid,
+        {
+            "files": {
+                "wandb-history.jsonl": {
+                    "offset": 0,
+                    "content": [json.dumps({"_step": 1, "train/loss": 0.5})],
+                },
+                "wandb-events.jsonl": {
+                    "offset": 0,
+                    "content": [json.dumps({"_step": 1, "system/gpu": 99})],
+                },
+            }
+        },
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Chart startup must not load full run detail")
+
+    monkeypatch.setattr(store, "files", forbidden)
+    monkeypatch.setattr(store.records, "imports", forbidden)
+    monkeypatch.setattr(store, "keys", forbidden)
+    headers = {"Authorization": "Bearer secret"}
+    assert client.get(f"/api/runs/{uid}/plots").status_code == 401
+    response = client.get(f"/api/runs/{uid}/plots", headers=headers)
+    assert response.status_code == 200
+    assert set(response.json()) == {"keys", "sessions"}
+    assert {k["key"] for k in response.json()["keys"]} == {"_step", "train/loss"}
+    assert client.get("/api/runs/missing/plots", headers=headers).status_code == 404
+
+
 def test_batched_series_and_compact_runs(client):
     import json
 
@@ -141,7 +177,10 @@ def test_batched_series_and_compact_runs(client):
     assert other["timestamps"] == [100 + x / 2 for x, _ in other["points"]]
     compact = client.get("/api/runs?compact=true", headers=headers).json()["runs"][0]
     assert compact["session_count"] == 2 and compact["has_metrics"]
-    assert "config" not in compact and compact["summary"] == {"_step": 49}
+    assert "config" not in compact and compact["summary"] == {
+        "_step": 49,
+        "global_step": 98,
+    }
     assert (
         client.post(
             "/api/series", headers=headers, json={"runs": [uid], "keys": ["x"] * 13}

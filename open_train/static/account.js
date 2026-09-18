@@ -128,6 +128,8 @@ async function tableInspector(uid, reference, title) {
 }
 
 async function accountSettings(me) {
+  // Membership can change while the page is open; never reuse login-time data.
+  me = await api("/auth/me");
   const dialog = makeDialog("Account & access"),
     content = el("div");
   dialog.append(content);
@@ -199,11 +201,52 @@ async function accountSettings(me) {
     el("h3", "Workspace membership"),
     el(
       "p",
-      "Add an existing user's entity name. A new workspace makes you its owner.",
+      "Your workspaces are listed below. Owners can see who has access and their roles. Add an existing user's entity name to share; a new workspace makes you its owner.",
     ),
   );
-  for (const membership of me.memberships)
-    content.append(el("p", `${membership.entity} · ${membership.role}`));
+  const membershipList = el("div", undefined, "workspace-memberships");
+  const refreshMembers = el("button", "Refresh members");
+  content.append(membershipList, refreshMembers);
+  async function loadMemberships() {
+    const current = await api("/auth/me");
+    membershipList.replaceChildren();
+    await Promise.all(
+      current.memberships.map(async (membership) => {
+        const section = el("section", undefined, "workspace-membership");
+        section.dataset.workspace = membership.entity;
+        section.append(el("h4", `${membership.entity} · ${membership.role}`));
+        membershipList.append(section);
+        if (membership.role !== "owner" && !current.admin) {
+          section.append(
+            el(
+              "p",
+              "Ask a workspace owner to view or manage its member list.",
+              "muted",
+            ),
+          );
+          return;
+        }
+        const status = el("p", "Loading members…", "muted");
+        section.append(status);
+        try {
+          const data = await api(
+            `/auth/workspaces/${encodeURIComponent(membership.entity)}/members`,
+          );
+          status.textContent = `${data.members.length} members`;
+          const list = el("ul", undefined, "workspace-member-list");
+          for (const member of data.members) {
+            const item = el("li", `${member.username} · ${member.role}`);
+            item.title = member.name;
+            list.append(item);
+          }
+          section.append(list);
+        } catch (error) {
+          status.textContent = `Could not load members: ${error.message}`;
+        }
+      }),
+    );
+  }
+  refreshMembers.onclick = () => loadMemberships().catch(showError);
   const members = el("form", undefined, "dialog-actions"),
     entity = el("input"),
     username = el("input"),
@@ -213,6 +256,7 @@ async function accountSettings(me) {
   entity.placeholder = "Workspace";
   entity.required = true;
   entity.setAttribute("aria-label", "Workspace");
+  entity.value = me.memberships.find((m) => m.role === "owner")?.entity || "";
   username.placeholder = "User entity name";
   username.required = true;
   username.setAttribute("aria-label", "User entity name");
@@ -234,6 +278,7 @@ async function accountSettings(me) {
           body: JSON.stringify({ username: username.value, role: role.value }),
         },
       );
+      await loadMemberships();
       message.textContent = "Membership saved.";
     } catch (e) {
       message.textContent = e.message;
@@ -246,6 +291,7 @@ async function accountSettings(me) {
     location.reload();
   };
   content.append(logout);
+  await loadMemberships();
   try {
     await loadKeys();
   } catch (e) {

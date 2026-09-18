@@ -43,6 +43,7 @@ def test_sdk_session_cards_markers_and_declared_axes(server):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(server["url"])
         page.get_by_label("Project", exact=True).select_option("local/sessions")
+        page.get_by_label("Compare browser-sessions", exact=True).check()
         loss = page.locator('.chart[data-metric="train/loss"]')
         expect(loss.locator("svg")).to_have_attribute(
             "aria-label", pytest_regex("train/loss by train/global_step")
@@ -57,6 +58,130 @@ def test_sdk_session_cards_markers_and_declared_axes(server):
             "train/global_step: 2–3"
         )
         assert not errors
+        browser.close()
+
+
+def test_train_eval_auto_axes_load_without_full_run_detail(server):
+    store = create_app(server["directory"] / "data").state.store
+    uid = store.upsert({"name": "train-eval", "modelName": "fast-plots"})[0]["uid"]
+    rows = [
+        {
+            "_step": 2545,
+            "_timestamp": 100,
+            "eval/global_step": 1180,
+            "eval/score": 0.35,
+        },
+        {
+            "_step": 2595,
+            "_timestamp": 101,
+            "train/global_step": 1195,
+            "train/loss": 0.5,
+        },
+    ]
+    store.stream(
+        uid,
+        {
+            "files": {
+                "wandb-history.jsonl": {
+                    "offset": 0,
+                    "content": [json.dumps(r) for r in rows],
+                }
+            }
+        },
+    )
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1100})
+        full_requests, errors, plot_requests = [], [], []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on(
+            "request",
+            lambda r: (
+                plot_requests.append(r.url)
+                if r.url.endswith(("/plots", "/api/series"))
+                else None
+            ),
+        )
+
+        # Loading plots must succeed even if the expensive detail is unavailable.
+        def block_detail(route):
+            full_requests.append(route.request.url)
+            route.abort()
+
+        page.route(server["url"] + f"/api/runs/{uid}", block_detail)
+        page.goto(server["url"])
+        expect(page.locator("#selection-count")).to_have_text("0 runs selected")
+        page.get_by_label("Project", exact=True).select_option("local/fast-plots")
+        expect(page.locator("#selection-count")).to_have_text("0 runs selected")
+        page.reload()
+        expect(page.get_by_label("Project", exact=True)).to_have_value(
+            "local/fast-plots"
+        )
+        expect(page.locator("#selection-count")).to_have_text("0 runs selected")
+        page.evaluate("() => refresh()")
+        assert not plot_requests
+        assert page.evaluate("""() => {
+            const element = document.createElement('span');
+            return [
+                {'_step': 10, 'train/global_step': 0, 'global_step': 9},
+                {'_step': 10, 'global_step': 7},
+                {'_step': 10, 'train/global_step': null},
+            ].map(summary => { updateRunStep(element, {summary}); return element.textContent; });
+        }""") == ["Train step 0", "Step 7", "Log step 10"]
+        page.get_by_label("Compare train-eval", exact=True).check()
+        expect(page.locator(f'[data-uid="{uid}"] .run-step')).to_have_text(
+            "Train step 1,195"
+        )
+        train = page.locator('.chart[data-metric="train/loss"]')
+        expect(train.locator("svg")).to_have_attribute(
+            "aria-label", pytest_regex("train/loss by train/global_step")
+        )
+        page.locator("#metric-search").fill("eval/score")
+        ev = page.locator('.chart[data-metric="eval/score"]')
+        expect(ev.locator("svg")).to_have_attribute(
+            "aria-label", pytest_regex("eval/score by eval/global_step")
+        )
+        expect(ev.locator("small").first).to_contain_text("Auto: eval/global_step")
+        assert page.evaluate(
+            "document.querySelector('.chart[data-metric=\"eval/score\"]').liveSeries[0].points"
+        ) == [[1180, 0.35]]
+        ev.locator(".plot-axis").select_option("_step")
+        expect(ev.locator("svg")).to_have_attribute(
+            "aria-label", pytest_regex("eval/score by _step")
+        )
+        assert page.evaluate(
+            "document.querySelector('.chart[data-metric=\"eval/score\"]').liveSeries[0].points"
+        ) == [[2545, 0.35]]
+        assert not full_requests and not errors
+        # Live sidebar refresh uses the same training counter without remounting.
+        page.evaluate("window.stepElement = document.querySelector('.run-step')")
+        store.stream(
+            uid,
+            {
+                "files": {
+                    "wandb-history.jsonl": {
+                        "offset": 2,
+                        "content": [
+                            json.dumps(
+                                {
+                                    "_step": 2597,
+                                    "train/global_step": 1196,
+                                    "train/loss": 0.4,
+                                }
+                            )
+                        ],
+                    }
+                }
+            },
+        )
+        page.evaluate("() => refresh()")
+        expect(page.locator(f'[data-uid="{uid}"] .run-step')).to_have_text(
+            "Train step 1,196"
+        )
+        assert page.evaluate("stepElement === document.querySelector('.run-step')")
+        page.unroute(server["url"] + f"/api/runs/{uid}", block_detail)
+        page.goto(server["url"] + "/local/fast-plots/runs/train-eval")
+        expect(page.locator("#selection-count")).to_have_text("1 runs selected")
         browser.close()
 
 
@@ -125,14 +250,16 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         expect(selector).to_be_visible()
         selector.select_option(f"{entity}/project-alpha")
         expect(page.locator("#runs-body .run-row")).to_have_count(2)
-        expect(page.locator("#selection-count")).to_have_text("2 runs selected")
+        expect(page.locator("#selection-count")).to_have_text("0 runs selected")
         selector.select_option(f"{entity}/project-beta")
         expect(page.locator("#runs-body .run-row")).to_have_count(1)
-        assert page.evaluate("[...state.selected]") == [uids[2]]
+        assert page.evaluate("[...state.selected]") == []
         page.reload()
         expect(selector).to_have_value(f"{entity}/project-beta")
-        expect(page.locator("#selection-count")).to_have_text("1 runs selected")
+        expect(page.locator("#selection-count")).to_have_text("0 runs selected")
         selector.select_option(f"{entity}/project-alpha")
+        page.get_by_label("Compare ui-0", exact=True).check()
+        page.get_by_label("Compare ui-1", exact=True).check()
         loss = page.locator('.chart[data-metric="train/loss"]')
         reward = page.locator('.chart[data-metric="train/reward"]')
         expect(loss.locator("svg")).to_be_visible()
@@ -144,7 +271,7 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         )
         expect(reward.locator(".plot-axis")).to_have_value("")
         expect(reward.locator("svg")).to_have_attribute(
-            "aria-label", pytest_regex("train/reward by _step")
+            "aria-label", pytest_regex("train/reward by train/global_step")
         )
         loss.locator(".plot-smoothing").fill("0.6")
         loss.locator(".plot-zoom-in").click()
@@ -179,7 +306,9 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         teammate.reload()
         expect(
             teammate.locator('.chart[data-metric="train/reward"] svg')
-        ).to_have_attribute("aria-label", pytest_regex("train/reward by _step"))
+        ).to_have_attribute(
+            "aria-label", pytest_regex("train/reward by train/global_step")
+        )
         # Per-plot axes also work inside the maximized view.
         loss.locator(".plot-maximize").click()
         expanded = page.locator(".plot-dialog")
@@ -237,8 +366,61 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         malformed = new_page(reader_key)
         malformed.goto(server["url"] + "/#view=" + quote(json.dumps({"version": 99})))
         expect(malformed.locator("#shared-view-notice")).to_contain_text("Invalid")
+        expect(malformed.locator("#selection-count")).to_have_text("0 runs selected")
+        malformed.get_by_label("Compare ui-0", exact=True).check()
         expect(malformed.locator(".chart svg").first).to_be_visible()
         assert not errors, errors
+        browser.close()
+
+
+@pytest.mark.parametrize("server", ["accounts"], indirect=True)
+def test_workspace_member_list_survives_reopening_and_refreshes_after_save(server):
+    app = create_app(server["directory"] / "data")
+    owner = app.state.accounts.authenticate(server["env"]["WANDB_API_KEY"], "api_key")
+    teammate = app.state.accounts.login_identity(
+        "github", "membership-reader", "reader@example.com", "Teammate"
+    )
+    session = app.state.accounts.issue(owner["id"], "session", "browser test", 1)["key"]
+    with app.state.store.connect() as db:
+        existing_members = db.execute(
+            "SELECT COUNT(*) FROM memberships WHERE entity=?", (owner["username"],)
+        ).fetchone()[0]
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        context = browser.new_context()
+        context.add_cookies(
+            [{"name": "open_train_session", "value": session, "url": server["url"]}]
+        )
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(server["url"])
+        page.get_by_label("Account & access", exact=True).click()
+        dialog = page.locator("dialog[open]")
+        roster = dialog.locator(
+            f'.workspace-membership[data-workspace="{owner["username"]}"]'
+        )
+        expect(roster.locator("li")).to_have_count(existing_members)
+        expect(dialog.get_by_label("Workspace", exact=True)).to_have_value(
+            owner["username"]
+        )
+        dialog.get_by_label("User entity name", exact=True).fill(teammate["username"])
+        dialog.get_by_label("Role", exact=True).select_option("reader")
+        dialog.get_by_role("button", name="Save membership", exact=True).click()
+        expect(roster.locator("li")).to_have_count(existing_members + 1)
+        expect(roster).to_contain_text(f"{teammate['username']} · reader")
+        dialog.get_by_label("Role", exact=True).select_option("writer")
+        dialog.get_by_role("button", name="Save membership", exact=True).click()
+        expect(roster).to_contain_text(f"{teammate['username']} · writer")
+        dialog.get_by_label("Close", exact=True).click()
+        page.get_by_label("Account & access", exact=True).click()
+        expect(roster).to_contain_text(f"{teammate['username']} · writer")
+        dialog.get_by_role("button", name="Refresh members", exact=True).click()
+        expect(roster.locator("li")).to_have_count(existing_members + 1)
+        page.reload()
+        page.get_by_label("Account & access", exact=True).click()
+        expect(roster).to_contain_text(f"{teammate['username']} · writer")
+        assert not errors
         browser.close()
 
 

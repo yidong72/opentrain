@@ -81,6 +81,8 @@ def test_writer_metadata_not_upserts_defines_sessions_and_resets_keep_all_rows(
     assert sessions[0]["ended"] == 102
     assert sessions[1]["state"] == "finished"
     assert sessions[1]["axes"]["train/global_step"] == {"first": 2, "last": 3}
+    compact = store.sessions.list(uid, compact=True)
+    assert compact == [{**s, "axes": {}} for s in sessions]
     assert store.sessions.resume(uid)["line_count"] == 4
 
 

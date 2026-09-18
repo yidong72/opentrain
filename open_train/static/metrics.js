@@ -6,7 +6,27 @@ const metricView = {
   signature: null,
   observer: null,
   controller: null,
+  details: new Map(),
 };
+
+async function plotDetail(uid, signal) {
+  const revision = state.runs.find((r) => r.uid === uid)?.updated;
+  let cached = metricView.details.get(uid);
+  if (!cached || cached.revision !== revision || cached.signal?.aborted) {
+    cached = { revision, signal };
+    cached.promise = api(`/api/runs/${uid}/plots`, { signal }).catch(
+      (error) => {
+        if (metricView.details.get(uid) === cached)
+          metricView.details.delete(uid);
+        throw error;
+      },
+    );
+    metricView.details.set(uid, cached);
+    while (metricView.details.size > 64)
+      metricView.details.delete(metricView.details.keys().next().value);
+  }
+  return cached.promise;
+}
 
 function runSessions(run) {
   const sessions = run.sessions ?? run.config?.tensorboard_import?.sessions;
@@ -183,15 +203,17 @@ async function renderCharts() {
   const displayed = selected.slice(0, 12);
   let details;
   try {
-    details = await Promise.all(displayed.map((r) => detail(r.uid)));
+    details = await Promise.all(
+      displayed.map((r) => plotDetail(r.uid, signal)),
+    );
   } catch (error) {
-    if (generation === state.generation) metricView.signature = null;
+    if (error.name === "AbortError" || generation !== state.generation) return;
+    metricView.signature = null;
     throw error;
   }
   if (generation !== state.generation) return;
   const runs = displayed.map((r, i) => ({
     ...r,
-    config: details[i].config,
     sessions: details[i].sessions,
   }));
   const usedColors = new Set();
