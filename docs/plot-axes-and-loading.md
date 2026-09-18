@@ -24,6 +24,16 @@ dialog, after saving a membership, or using **Refresh members**. It does not exp
 email addresses or credentials; readers, writers and outsiders cannot fetch the
 owner-only roster endpoint. Existing access grants are unchanged.
 
+Use **Edit role** beside a teammate, choose **reader**, **writer** or **owner**,
+then **Save**. **Cancel** leaves access unchanged. Failed saves keep the editor
+open for retry; your own membership cannot be demoted from this screen.
+
+**Remove** asks you to confirm the teammate and workspace before revoking that
+membership. It leaves their account, keys, memberships in other workspaces, and
+training data untouched. Workspace owners (or server admins) can remove members;
+removing yourself or the last owner is blocked. A removed member can be added
+again using the form below. Server admins retain their global administrator access.
+
 ## Automatic axes
 
 1. Explicit per-plot axes always win, including **Logging step** (`_step`).

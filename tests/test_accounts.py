@@ -151,6 +151,97 @@ def test_reader_cannot_write(accounts_app):
     )
 
 
+def test_remove_workspace_member_revokes_only_membership(accounts_app):
+    app = accounts_app
+    owner, owner_key = identity(app, "remove-owner")
+    teammate, teammate_key = identity(app, "remove-teammate")
+    writer, _ = identity(app, "remove-writer")
+    outsider, _ = identity(app, "remove-outsider")
+    admin, _ = identity(app, "remove-admin")
+    with app.state.store.connect(write=True) as db:
+        db.execute(
+            "INSERT INTO memberships VALUES (?,?,?)",
+            (owner["username"], teammate["id"], "reader"),
+        )
+        db.execute(
+            "INSERT INTO memberships VALUES (?,?,?)",
+            (owner["username"], writer["id"], "writer"),
+        )
+        db.execute("UPDATE users SET admin=1 WHERE id=?", (admin["id"],))
+    uid = app.state.store.upsert(
+        {"entityName": owner["username"], "name": "preserved"}
+    )[0]["uid"]
+    personal_uid = app.state.store.upsert(
+        {"entityName": teammate["username"], "name": "personal"}
+    )[0]["uid"]
+    endpoint = f"/auth/workspaces/{owner['username']}/members/"
+    origin = {"Origin": "http://testserver"}
+
+    def browser(account):
+        client = TestClient(app)
+        session = app.state.accounts.issue(account["id"], "session", "test", 1)["key"]
+        client.cookies.set("open_train_session", session)
+        return client
+
+    assert TestClient(app).delete(endpoint + teammate["username"]).status_code == 401
+    assert (
+        TestClient(app)
+        .delete(endpoint + teammate["username"], headers=owner_key)
+        .status_code
+        == 403
+    )
+    for actor in (teammate, writer, outsider):
+        assert (
+            browser(actor)
+            .delete(endpoint + teammate["username"], headers=origin)
+            .status_code
+            == 403
+        )
+    client = browser(owner)
+    assert client.delete(endpoint + teammate["username"]).status_code == 403  # CSRF
+    assert (
+        client.delete(endpoint + owner["username"], headers=origin).status_code == 409
+    )
+    assert (
+        browser(admin).delete(endpoint + owner["username"], headers=origin).status_code
+        == 409
+    )
+    assert client.delete(endpoint + "missing", headers=origin).status_code == 404
+    assert (
+        TestClient(app).get(f"/api/runs/{uid}", headers=teammate_key).status_code == 200
+    )
+    assert (
+        client.delete(endpoint + teammate["username"], headers=origin).json()["removed"]
+        == teammate["username"]
+    )
+    assert (
+        client.delete(endpoint + teammate["username"], headers=origin).status_code
+        == 404
+    )
+    assert (
+        TestClient(app).get(f"/api/runs/{uid}", headers=teammate_key).status_code == 403
+    )
+    assert (
+        TestClient(app)
+        .get(f"/api/runs/{personal_uid}", headers=teammate_key)
+        .status_code
+        == 200
+    )
+    assert client.get(f"/api/runs/{uid}").status_code == 200
+    assert TestClient(app).get("/auth/me", headers=teammate_key).status_code == 200
+    assert (
+        client.post(
+            endpoint.rstrip("/"),
+            headers=origin,
+            json={"username": teammate["username"], "role": "reader"},
+        ).status_code
+        == 200
+    )
+    assert (
+        TestClient(app).get(f"/api/runs/{uid}", headers=teammate_key).status_code == 200
+    )
+
+
 def test_oauth_github_pkce_and_state(tmp_path, monkeypatch):
     monkeypatch.setenv("OPEN_TRAIN_GITHUB_CLIENT_ID", "test-client")
     monkeypatch.setenv("OPEN_TRAIN_GITHUB_CLIENT_SECRET", secrets.token_hex(20))

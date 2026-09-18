@@ -409,8 +409,37 @@ def test_workspace_member_list_survives_reopening_and_refreshes_after_save(serve
         dialog.get_by_role("button", name="Save membership", exact=True).click()
         expect(roster.locator("li")).to_have_count(existing_members + 1)
         expect(roster).to_contain_text(f"{teammate['username']} · reader")
-        dialog.get_by_label("Role", exact=True).select_option("writer")
-        dialog.get_by_role("button", name="Save membership", exact=True).click()
+        member = roster.locator(f'li[data-username="{teammate["username"]}"]')
+        expect(
+            roster.get_by_label(f"Edit role for {owner['username']}", exact=True)
+        ).to_have_count(0)
+        member.get_by_role(
+            "button", name=f"Edit role for {teammate['username']}", exact=True
+        ).click()
+        role = member.get_by_label(f"Role for {teammate['username']}", exact=True)
+        expect(role).to_have_value("reader")
+        role.select_option("owner")
+        member.get_by_role("button", name="Cancel", exact=True).click()
+        expect(member).to_contain_text(f"{teammate['username']} · reader")
+        member.get_by_role(
+            "button", name=f"Edit role for {teammate['username']}", exact=True
+        ).click()
+        role.select_option("writer")
+        endpoint = server["url"] + f"/auth/workspaces/{owner['username']}/members"
+
+        def fail_save(route):
+            if route.request.method == "POST":
+                route.fulfill(status=503, json={"detail": "Temporary failure"})
+            else:
+                route.continue_()
+
+        page.route(endpoint, fail_save)
+        member.get_by_role("button", name="Save", exact=True).click()
+        expect(member.get_by_role("status")).to_contain_text("Could not save role")
+        expect(member).to_contain_text(f"{teammate['username']} · reader")
+        expect(role).to_be_enabled()
+        page.unroute(endpoint, fail_save)
+        member.get_by_role("button", name="Save", exact=True).click()
         expect(roster).to_contain_text(f"{teammate['username']} · writer")
         dialog.get_by_label("Close", exact=True).click()
         page.get_by_label("Account & access", exact=True).click()
@@ -420,6 +449,41 @@ def test_workspace_member_list_survives_reopening_and_refreshes_after_save(serve
         page.reload()
         page.get_by_label("Account & access", exact=True).click()
         expect(roster).to_contain_text(f"{teammate['username']} · writer")
+        remove = member.get_by_role(
+            "button",
+            name=f"Remove {teammate['username']} from {owner['username']}",
+            exact=True,
+        )
+        expect(
+            roster.get_by_role(
+                "button",
+                name=f"Remove {owner['username']} from {owner['username']}",
+                exact=True,
+            )
+        ).to_have_count(0)
+        page.once("dialog", lambda prompt: prompt.dismiss())
+        remove.click()
+        expect(member).to_contain_text(f"{teammate['username']} · writer")
+        removal_endpoint = endpoint + "/" + teammate["username"]
+        page.route(
+            removal_endpoint,
+            lambda route: route.fulfill(
+                status=503, json={"detail": "Temporary failure"}
+            ),
+        )
+        page.once("dialog", lambda prompt: prompt.accept())
+        remove.click()
+        expect(member.get_by_role("status")).to_contain_text("Could not remove member")
+        expect(remove).to_be_enabled()
+        page.unroute(removal_endpoint)
+        page.once("dialog", lambda prompt: prompt.accept())
+        remove.click()
+        expect(member).to_have_count(0)
+        expect(roster.locator("li")).to_have_count(existing_members)
+        page.reload()
+        page.get_by_label("Account & access", exact=True).click()
+        expect(roster.locator("li")).to_have_count(existing_members)
+        expect(member).to_have_count(0)
         assert not errors
         browser.close()
 

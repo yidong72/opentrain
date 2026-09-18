@@ -776,6 +776,29 @@ dialog::backdrop {
 #detail-content {
   min-height: 200px;
 }
+.workspace-member-list {
+  list-style: none;
+  padding: 0;
+}
+.workspace-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.workspace-member > span {
+  overflow-wrap: anywhere;
+}
+.member-role-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.member-role-error {
+  flex-basis: 100%;
+}
 .kv {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) 2fr;

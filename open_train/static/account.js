@@ -201,7 +201,7 @@ async function accountSettings(me) {
     el("h3", "Workspace membership"),
     el(
       "p",
-      "Your workspaces are listed below. Owners can see who has access and their roles. Add an existing user's entity name to share; a new workspace makes you its owner.",
+      "Use Edit role or Remove beside a teammate to manage access. Reader: view only. Writer: log and edit runs. Owner: also manage members. Removing membership does not delete their account or training data.",
     ),
   );
   const membershipList = el("div", undefined, "workspace-memberships");
@@ -235,8 +235,110 @@ async function accountSettings(me) {
           status.textContent = `${data.members.length} members`;
           const list = el("ul", undefined, "workspace-member-list");
           for (const member of data.members) {
-            const item = el("li", `${member.username} · ${member.role}`);
+            const item = el("li", undefined, "workspace-member"),
+              label = el("span", `${member.username} · ${member.role}`);
+            item.dataset.username = member.username;
             item.title = member.name;
+            item.append(label);
+            if (member.username === current.username) {
+              const own = el(
+                "small",
+                "You · cannot demote or remove yourself",
+                "muted",
+              );
+              item.append(own);
+            } else {
+              const edit = el("button", "Edit role");
+              edit.type = "button";
+              edit.setAttribute(
+                "aria-label",
+                `Edit role for ${member.username}`,
+              );
+              const remove = el("button", "Remove"),
+                removalError = el("p", undefined, "member-role-error");
+              remove.type = "button";
+              remove.setAttribute(
+                "aria-label",
+                `Remove ${member.username} from ${membership.entity}`,
+              );
+              removalError.setAttribute("role", "status");
+              removalError.hidden = true;
+              item.append(edit, remove, removalError);
+              remove.onclick = async () => {
+                if (
+                  !window.confirm(
+                    `Remove ${member.username} from workspace ${membership.entity}? This revokes their membership but does not delete their account or training data.`,
+                  )
+                )
+                  return;
+                edit.disabled = remove.disabled = true;
+                removalError.hidden = true;
+                try {
+                  await api(
+                    `/auth/workspaces/${encodeURIComponent(membership.entity)}/members/${encodeURIComponent(member.username)}`,
+                    { method: "DELETE" },
+                  );
+                  await loadMemberships();
+                  message.textContent = `Removed ${member.username} from ${membership.entity}. Their account and training data were not deleted. You can add them again below.`;
+                } catch (failure) {
+                  removalError.textContent = `Could not remove member: ${failure.message}`;
+                  removalError.hidden = false;
+                } finally {
+                  edit.disabled = remove.disabled = false;
+                }
+              };
+              edit.onclick = () => {
+                edit.hidden = remove.hidden = true;
+                removalError.hidden = true;
+                const editor = el("form", undefined, "member-role-editor"),
+                  select = el("select"),
+                  save = el("button", "Save", "primary"),
+                  cancel = el("button", "Cancel"),
+                  error = el("p", undefined, "member-role-error");
+                select.setAttribute(
+                  "aria-label",
+                  `Role for ${member.username}`,
+                );
+                for (const value of ["reader", "writer", "owner"])
+                  select.add(new Option(value, value));
+                select.value = member.role;
+                cancel.type = "button";
+                error.setAttribute("role", "status");
+                error.hidden = true;
+                editor.append(select, save, cancel, error);
+                item.append(editor);
+                select.focus();
+                cancel.onclick = () => {
+                  editor.remove();
+                  edit.hidden = remove.hidden = false;
+                  edit.focus();
+                };
+                editor.onsubmit = async (event) => {
+                  event.preventDefault();
+                  select.disabled = save.disabled = cancel.disabled = true;
+                  error.hidden = true;
+                  try {
+                    await api(
+                      `/auth/workspaces/${encodeURIComponent(membership.entity)}/members`,
+                      {
+                        method: "POST",
+                        body: JSON.stringify({
+                          username: member.username,
+                          role: select.value,
+                        }),
+                      },
+                    );
+                    await loadMemberships();
+                    message.textContent = `Updated ${member.username} to ${select.value}.`;
+                  } catch (failure) {
+                    error.textContent = `Could not save role: ${failure.message}`;
+                    error.hidden = false;
+                  } finally {
+                    select.disabled = save.disabled = cancel.disabled = false;
+                  }
+                };
+              };
+            }
             list.append(item);
           }
           section.append(list);

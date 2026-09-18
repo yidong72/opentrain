@@ -392,6 +392,38 @@ def install_accounts(app, accounts, public_url, enabled):
             ]
         return {"entity": entity, "members": roster}
 
+    @router.delete("/workspaces/{entity}/members/{username}")
+    def remove_member(entity: str, username: str, request: Request):
+        current = user(request, True)
+        with accounts.store.connect(write=True) as db:
+            roles = db.execute(
+                "SELECT user,role FROM memberships WHERE entity=?", (entity,)
+            ).fetchall()
+            if not current["admin"] and not any(
+                r["user"] == current["id"] and r["role"] == "owner" for r in roles
+            ):
+                raise HTTPException(403, "Workspace owner required")
+            target = db.execute(
+                "SELECT m.user,m.role FROM memberships m JOIN users u ON u.id=m.user WHERE m.entity=? AND u.username=?",
+                (entity, username),
+            ).fetchone()
+            if not target:
+                raise HTTPException(404, "Workspace member not found")
+            if target["user"] == current["id"]:
+                raise HTTPException(409, "You cannot remove your own membership")
+            if (
+                target["role"] == "owner"
+                and sum(r["role"] == "owner" for r in roles) <= 1
+            ):
+                raise HTTPException(409, "Cannot remove the last workspace owner")
+            # Revoke only this membership; accounts, credentials and run data
+            # remain intact. Authorization checks membership on every request.
+            db.execute(
+                "DELETE FROM memberships WHERE entity=? AND user=?",
+                (entity, target["user"]),
+            )
+        return {"ok": True, "entity": entity, "removed": username}
+
     @router.post("/workspaces/{entity}/members")
     def member(entity: str, body: MemberRequest, request: Request):
         current = user(request, True)
