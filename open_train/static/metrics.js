@@ -7,6 +7,8 @@ const metricView = {
   observer: null,
   controller: null,
   details: new Map(),
+  category: "",
+  limit: 24,
 };
 
 async function plotDetail(uid, signal) {
@@ -128,6 +130,7 @@ function renderSessions(content, run) {
 }
 
 function initMetrics() {
+  initNavigator();
   try {
     const saved = JSON.parse(
       localStorage.getItem("open-train-metric-groups") || "[]",
@@ -139,6 +142,7 @@ function initMetrics() {
   let timer;
   $("#metric-search").oninput = () => {
     state.sharedMetric = null;
+    metricView.limit = 24;
     clearTimeout(timer);
     timer = setTimeout(() => renderCharts().catch(showError), 150);
   };
@@ -163,7 +167,7 @@ async function renderCharts() {
   $("#selection-count").textContent = `${selected.length} runs selected`;
   for (const id of ["chart-grid", "metric-toolbar", "comparison-legend"])
     $("#" + id).hidden = state.tab !== "charts";
-  const search = $("#metric-search").value.trim().toLowerCase();
+  const search = $("#metric-search").value.trim();
   const axis = $("#x-axis").value;
   const signature = JSON.stringify([
     selected.map((r) => r.uid),
@@ -171,6 +175,8 @@ async function renderCharts() {
     search,
     axis,
     state.sharedMetric,
+    metricView.category,
+    metricView.limit,
     $("#show-sessions").checked,
   ]);
   if (
@@ -199,7 +205,12 @@ async function renderCharts() {
     ),
   );
   $("#metric-count").textContent = "";
-  if (!selected.length) return;
+  $("#more-metrics").hidden = true;
+  $("#metric-search-error").hidden = true;
+  if (!selected.length) {
+    renderMetricNavigation([]);
+    return;
+  }
   const displayed = selected.slice(0, 12);
   let details;
   try {
@@ -237,7 +248,11 @@ async function renderCharts() {
           .map((k) => k.key),
       ),
     ),
-  ].sort();
+  ].sort((a, b) => {
+    const rank = (k) =>
+      k.startsWith("train/") ? 0 : k.startsWith("eval/") ? 1 : 2;
+    return rank(a) - rank(b) || a.localeCompare(b);
+  });
   metricView.catalogEmpty = keys.length === 0;
   for (const key of new Set(
     details.flatMap((d) =>
@@ -246,13 +261,35 @@ async function renderCharts() {
   ))
     if (![...$("#x-axis").options].some((o) => o.value === key))
       $("#x-axis").add(new Option(key, key));
-  const filtered = keys.filter((k) =>
-    state.sharedMetric
-      ? k === state.sharedMetric
-      : k.toLowerCase().includes(search),
-  );
+  renderMetricNavigation(keys);
+  let matches;
+  try {
+    matches = state.sharedMetric
+      ? keys.filter((k) => k === state.sharedMetric)
+      : await filterMetricKeys(
+          keys.filter(
+            (k) =>
+              !metricView.category || k.startsWith(metricView.category + "/"),
+          ),
+          search,
+          signal,
+        );
+  } catch (error) {
+    if (error.name === "AbortError" || generation !== state.generation) return;
+    $("#metric-search-error").textContent = error.message;
+    $("#metric-search-error").hidden = false;
+    $("#chart-grid").replaceChildren(
+      el("p", "Adjust the search to explore metrics.", "chart-placeholder"),
+    );
+    return;
+  }
+  if (generation !== state.generation) return;
+  const filtered = matches.slice(0, metricView.limit);
   $("#metric-count").textContent =
-    `${filtered.length} of ${keys.length} metrics · charts load on demand`;
+    `${filtered.length} of ${matches.length} metrics · ${keys.length} available`;
+  $("#more-metrics").hidden = filtered.length >= matches.length;
+  $("#more-metrics").textContent =
+    `Show ${Math.min(24, matches.length - filtered.length)} more metrics (${matches.length - filtered.length} remaining)`;
   for (const run of runs) {
     const item = el("button", undefined, "comparison-item");
     item.dataset.uid = run.uid;
@@ -441,9 +478,16 @@ async function renderCharts() {
       const group = el("details", undefined, "metric-group"),
         next = [...path, name],
         id = next.join("/");
+      if (
+        metricView.category === id ||
+        metricView.category.startsWith(id + "/")
+      ) {
+        fragment.append(build(child, next));
+        continue;
+      }
       group.dataset.group = id;
       group.open =
-        Boolean(search) ||
+        Boolean(search || metricView.category || state.sharedMetric) ||
         (metricView.open.get(id) ?? metricView.allOpen ?? path.length === 0);
       const heading = el("summary");
       heading.append(

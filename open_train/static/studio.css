@@ -1,0 +1,494 @@
+/* A quiet, dense workspace: navigation stays still while signals update. */
+:root {
+  color: #293b39;
+  background: #f8faf9;
+  --muted: #6e7f79;
+  --border: #e4eae7;
+}
+.sidebar {
+  width: 286px;
+  background: #f3f6f4;
+  padding: 20px 14px 12px;
+}
+main {
+  margin-left: 286px;
+}
+.brand {
+  font-size: 22px;
+}
+.sidebar .workspace {
+  background: #ffffffa8;
+}
+header {
+  height: 56px;
+  padding: 0 28px;
+  background: #ffffffd9;
+}
+.view {
+  padding: 26px 28px;
+}
+h1 {
+  font-size: 28px;
+  letter-spacing: -1px;
+  margin: 6px 0;
+}
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  color: var(--green);
+}
+.subtitle {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.title-row {
+  margin-bottom: 16px;
+}
+.stats {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+  margin: 16px 0 10px;
+  overflow: hidden;
+}
+.stats article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 20px;
+  background: transparent;
+  box-shadow: none;
+}
+.stats article:last-child {
+  border-right: 0;
+}
+.stats article > span {
+  font-size: 11px;
+}
+.stats strong {
+  font-size: 22px;
+  margin: 0;
+  letter-spacing: -0.8px;
+}
+.compare-bar {
+  padding: 10px 0;
+}
+.compare-bar > div {
+  max-width: 100%;
+}
+.compare-bar label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+#x-axis {
+  min-width: 0;
+  max-width: min(260px, 55vw);
+}
+.metric-toolbar {
+  margin: 8px 0;
+}
+.comparison-item {
+  padding: 7px 10px;
+  font-size: 11px;
+}
+.comparison-item small {
+  font-size: 9px;
+}
+.metric-group {
+  padding: 0 8px;
+}
+.metric-group > summary {
+  padding: 10px 4px;
+}
+.metric-group .metric-group {
+  border: 0;
+  margin-left: 0;
+  padding: 0;
+}
+.chart-grid {
+  margin-bottom: 12px;
+}
+.stats small {
+  display: none;
+}
+#run-sidebar {
+  gap: 12px;
+}
+#runs-panel,
+#metrics-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+}
+[hidden] {
+  display: none !important;
+}
+.navigator-tabs {
+  display: flex;
+  padding: 3px;
+  background: #e6ede9;
+  border-radius: 8px;
+  gap: 3px;
+}
+.navigator-tabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  padding: 7px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.navigator-tabs button[aria-selected="true"] {
+  background: white;
+  color: var(--green);
+  box-shadow: 0 1px 3px #173b2010;
+  font-weight: 600;
+}
+.navigator-caption {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  margin: 6px 8px 0;
+}
+#metric-tree {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 12px;
+}
+.metric-tree-branch {
+  margin: 0;
+  padding: 0;
+}
+.metric-tree-branch > summary {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.metric-tree-branch > summary::-webkit-details-marker {
+  display: none;
+}
+.metric-tree-branch > summary::before {
+  content: "›";
+  width: 14px;
+  flex-shrink: 0;
+  color: #85968e;
+  text-align: center;
+}
+.metric-tree-branch[open] > summary::before {
+  transform: rotate(90deg);
+}
+.metric-tree-children {
+  margin-left: 12px;
+  border-left: 1px solid var(--border);
+  padding-left: 3px;
+}
+.metric-category {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 8px;
+  background: transparent;
+  border-radius: 5px;
+  text-align: left;
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.metric-category > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.metric-category .metric-count {
+  color: #8a9892;
+  font-size: 10px;
+}
+.metric-category[aria-current="page"] {
+  color: #0f6e55;
+  background: #dceee5;
+  font-weight: 600;
+}
+#metric-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 14px 0;
+  font-size: 11px;
+  color: #97a39d;
+}
+#metric-breadcrumbs button {
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--muted);
+}
+#metric-breadcrumbs button:last-child {
+  color: var(--green);
+  background: #e8f2ed;
+}
+#metric-search-error {
+  color: #a53c30;
+  padding: 8px 12px;
+  background: #fff4ef;
+  border-radius: 6px;
+}
+.metric-toolbar {
+  gap: 9px;
+}
+.metric-toolbar label {
+  font-size: 11px;
+}
+.chart-grid {
+  gap: 12px;
+}
+.metric-group {
+  background: transparent;
+  border-color: var(--border);
+  border-radius: 8px;
+}
+.metric-group > summary {
+  background: #f0f5f2;
+  font-size: 12px;
+}
+.chart {
+  padding: 14px 14px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 5px #18352603;
+  min-width: 0;
+}
+.chart-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.chart-heading > span {
+  flex: 1;
+  min-width: 0;
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  overflow-wrap: anywhere;
+  color: #334a40;
+}
+.chart-heading > small {
+  order: 3;
+  width: 100%;
+  font-size: 9px;
+  color: #8a9991;
+}
+.plot-maximize {
+  padding: 2px 6px;
+  border-color: transparent;
+  font-size: 17px;
+  color: #7a8c82;
+}
+.plot-values {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 7px;
+  max-height: 110px;
+  overflow: auto;
+}
+.plot-value-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font:
+    10px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.value-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.value-run {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #7b8b83;
+}
+.plot-value-row strong {
+  font-weight: 500;
+}
+.plot-value-row small {
+  display: inline;
+  min-width: 56px;
+  text-align: right;
+  font-size: 9px;
+  color: #8a9891;
+}
+.plot-settings {
+  margin-bottom: 4px;
+}
+.plot-settings > summary {
+  cursor: pointer;
+  font-size: 10px;
+  color: #7c8f84;
+  padding: 4px 0;
+}
+.plot-settings .plot-controls {
+  margin: 5px 0 8px;
+  padding: 8px;
+  background: #f6f8f7;
+  border-radius: 6px;
+}
+.plot-controls select {
+  max-width: 170px;
+}
+.plot-statistics {
+  overflow: auto;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.plot-statistics p {
+  font-size: 11px;
+}
+.plot-statistics table {
+  width: 100%;
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.plot-statistics td,
+.plot-statistics th {
+  padding: 10px;
+  white-space: nowrap;
+  text-align: right;
+}
+.plot-statistics td:first-child,
+.plot-statistics th:first-child {
+  text-align: left;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.endpoint-label {
+  paint-order: stroke;
+  stroke: white;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+#more-metrics {
+  display: block;
+  margin: 22px auto;
+  font-size: 12px;
+}
+body[data-density="compact"] .chart-legend,
+body[data-density="compact"] .plot-hint {
+  display: none;
+}
+body[data-density="compact"] .plot-dialog .chart-legend {
+  display: flex;
+}
+body[data-density="compact"] .plot-dialog .plot-hint {
+  display: block;
+}
+@media (min-width: 1300px) {
+  body[data-density="compact"] .chart-grid,
+  body[data-density="compact"] .metric-group-content {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1050px) and (min-width: 761px) {
+  .sidebar {
+    width: 260px;
+  }
+  main {
+    margin-left: 260px;
+  }
+  .view {
+    padding: 22px 18px;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    position: static;
+    width: 100%;
+    padding: 14px;
+    flex-wrap: wrap;
+  }
+  main {
+    margin-left: 0;
+  }
+  #run-sidebar {
+    flex-basis: 100%;
+    height: auto;
+    max-height: 300px;
+    margin-top: 0;
+  }
+  #runs-body {
+    min-height: 80px;
+  }
+  #metrics-panel {
+    min-height: 100px;
+  }
+  #metric-tree {
+    max-height: 235px;
+  }
+  .view {
+    padding: 22px 14px;
+  }
+  header {
+    padding: 0 14px;
+  }
+  .stats article {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 10px;
+  }
+  .stats strong {
+    font-size: 22px;
+  }
+  .stats article > span {
+    font-size: 9px;
+  }
+  .title-row {
+    gap: 10px;
+  }
+  .title-row .primary {
+    display: none;
+  }
+  .chart-grid,
+  .metric-group-content {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .metric-toolbar {
+    flex-wrap: wrap;
+  }
+}

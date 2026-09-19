@@ -11,6 +11,7 @@ function validateSharedView(value) {
     !text(value.project) ||
     !text(value.axis) ||
     !text(value.search) ||
+    !(value.category === undefined || text(value.category)) ||
     !(value.metric === null || text(value.metric)) ||
     !Array.isArray(value.plots) ||
     value.plots.length > 512 ||
@@ -25,6 +26,7 @@ function validateSharedView(value) {
       !text(p[0]) ||
       !p[1] ||
       !text(p[1].axis) ||
+      ![undefined, "linear", "log"].includes(p[1].scale) ||
       !Number.isFinite(p[1].smoothing) ||
       p[1].smoothing < 0 ||
       p[1].smoothing > 0.95 ||
@@ -46,7 +48,15 @@ function validateSharedView(value) {
         throw Error("Invalid shared zoom bounds.");
       return [d[0], [...d[1]]];
     });
-    return [p[0], { axis: p[1].axis, smoothing: p[1].smoothing, domains }];
+    return [
+      p[0],
+      {
+        axis: p[1].axis,
+        smoothing: p[1].smoothing,
+        scale: p[1].scale || "linear",
+        domains,
+      },
+    ];
   });
   const groups = value.groups.map((g) => {
     if (
@@ -74,6 +84,7 @@ function validateSharedView(value) {
     project: value.project,
     axis: value.axis,
     search: value.search,
+    category: value.category || "",
     metric: value.metric,
     plots,
     groups,
@@ -92,6 +103,8 @@ function initWorkspace() {
   $("#project-filter").onchange = () => {
     const project = $("#project-filter").value;
     state.selected.clear();
+    metricView.category = "";
+    metricView.limit = 24;
     state.sharedMetric = null;
     $("#metric-search").value = "";
     $("#shared-view-notice").hidden = true;
@@ -159,6 +172,8 @@ function restoreSharedView() {
   $("#show-sessions").checked = view.sessions;
   $("#project-filter").value = view.project;
   metricView.open = new Map(view.groups);
+  metricView.category = view.category;
+  metricView.limit = 24;
   metricView.allOpen = view.allOpen;
   runColors.clear();
   for (const [id, color] of view.colors) runColors.set(id, color);
@@ -188,6 +203,7 @@ function shareView(metric = null) {
       project: $("#project-filter").value,
       axis: $("#x-axis").value,
       search: $("#metric-search").value,
+      category: metricView.category,
       metric: metric || state.sharedMetric || null,
       sessions: $("#show-sessions").checked,
       colors: [...state.selected].map((id) => [id, color(id)]),
@@ -195,7 +211,12 @@ function shareView(metric = null) {
         .filter(([key]) => !metric || key === metric)
         .map(([key, p]) => [
           key,
-          { axis: p.axis, smoothing: p.smoothing, domains: [...p.domains] },
+          {
+            axis: p.axis,
+            smoothing: p.smoothing,
+            scale: p.scale || "linear",
+            domains: [...p.domains],
+          },
         ]),
       groups: [...metricView.open],
       allOpen: metricView.allOpen,
@@ -288,6 +309,7 @@ async function loadPlot(key) {
 
 async function exportPlot(card, key, axis, series) {
   const smoothing = plotPreference(key).smoothing;
+  const scale = plotPreference(key).scale || "linear";
   const original = $("svg", card);
   if (!original) throw Error("There are no plotted values to export.");
   const svg = original.cloneNode(true);
@@ -321,14 +343,14 @@ async function exportPlot(card, key, axis, series) {
     context.fillText(key, 40, 32, width - 80);
     context.font = "14px Arial";
     context.fillText(
-      `X: ${axis} · EMA ${smoothing} · ${series.some((s) => s.sampled) ? "Sampled (min/max)" : "All returned points"} · ${new Date().toISOString()}`,
+      `X: ${axis} · Y: ${scale} · EMA ${smoothing} · ${series.some((s) => s.sampled) ? "Sampled (min/max)" : "All returned points"} · ${new Date().toISOString()}`,
       40,
       58,
       width - 80,
     );
     const omitted = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
     context.fillText(
-      `${omitted} records omitted for missing/unverified axis pairing. Export reflects current zoom.`,
+      `${omitted} records omitted for missing/unverified axis pairing.${scale === "log" ? " Nonpositive values omitted on log scale." : ""} Export reflects current zoom.`,
       40,
       80,
     );

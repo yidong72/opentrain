@@ -4,12 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260918-members2" />
-    <script src="/static/metrics.js?v=20260918-sidebar1" defer></script>
-    <script src="/static/workspace.js?v=20260918-sidebar1" defer></script>
-    <script src="/static/live.js?v=20260918-sidebar1" defer></script>
-    <script src="/static/app.js?v=20260918-sidebar1" defer></script>
-    <script src="/static/account.js?v=20260918-members3" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260919-studio2" />
+    <link rel="stylesheet" href="/static/studio.css?v=20260919-studio2" />
+    <script src="/static/navigator.js?v=20260919-studio2" defer></script>
+    <script src="/static/metrics.js?v=20260919-studio2" defer></script>
+    <script src="/static/workspace.js?v=20260919-studio2" defer></script>
+    <script src="/static/live.js?v=20260919-studio2" defer></script>
+    <script src="/static/app.js?v=20260919-studio2" defer></script>
+    <script src="/static/account.js?v=20260919-studio2" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -37,66 +39,101 @@
             <option value="">All projects</option>
           </select>
         </label>
-        <div class="run-panel-title">
-          <h2>Runs <span id="run-count" class="pill">0</span></h2>
-          <button id="clear-selection">Clear selection</button>
+        <div
+          class="navigator-tabs"
+          role="tablist"
+          aria-label="Sidebar navigation"
+        >
+          <button
+            id="runs-tab"
+            role="tab"
+            aria-selected="true"
+            aria-controls="runs-panel"
+          >
+            Runs
+          </button>
+          <button
+            id="metrics-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="metrics-panel"
+          >
+            Metrics
+          </button>
         </div>
-        <label class="search"
-          >⌕
-          <input
-            id="search"
-            type="search"
-            placeholder="Search name, ID, group, tags…"
-            aria-label="Search runs"
-        /></label>
-        <details class="run-filters">
-          <summary>Filter runs <span id="filter-count"></span></summary>
-          <label
-            >Status<select id="state-filter" aria-label="Run status">
-              <option value="">All statuses</option>
-              <option>running</option>
-              <option>finished</option>
-              <option>failed</option>
-              <option>crashed</option>
-              <option>imported</option>
-            </select></label
-          >
-          <label
-            >Source<select id="source-filter" aria-label="Run source">
-              <option value="">All sources</option>
-              <option value="tensorboard">TensorBoard</option>
-              <option value="wandb">W&B SDK</option>
-            </select></label
-          >
-          <label
-            ><input id="selected-filter" type="checkbox" /> Selected runs
-            only</label
-          >
-          <button id="clear-filters">Reset filters</button>
-        </details>
-        <div class="run-page-select">
-          <label
-            ><input
-              id="select-all"
-              type="checkbox"
-              aria-label="Select page runs"
-            />
-            Select page</label
-          ><span class="muted">Compare up to 12</span>
-        </div>
-        <div id="runs-body" role="list" aria-label="Runs"></div>
-        <div class="run-pagination">
-          <span id="run-range" aria-live="polite"></span>
-          <div>
-            <button id="runs-prev" aria-label="Previous runs page">←</button
-            ><span id="run-page"></span
-            ><button id="runs-next" aria-label="Next runs page">→</button
-            ><select id="run-page-size" aria-label="Runs per page">
-              <option value="20">20 / page</option>
-              <option value="50">50 / page</option>
-              <option value="100">100 / page</option>
-            </select>
+        <div id="runs-panel" role="tabpanel" aria-labelledby="runs-tab">
+          <div class="run-panel-title">
+            <h2>Runs <span id="run-count" class="pill">0</span></h2>
+            <button id="clear-selection">Clear selection</button>
           </div>
+          <label class="search"
+            >⌕
+            <input
+              id="search"
+              type="search"
+              placeholder="Search name, ID, group, tags…"
+              aria-label="Search runs"
+          /></label>
+          <details class="run-filters">
+            <summary>Filter runs <span id="filter-count"></span></summary>
+            <label
+              >Status<select id="state-filter" aria-label="Run status">
+                <option value="">All statuses</option>
+                <option>running</option>
+                <option>finished</option>
+                <option>failed</option>
+                <option>crashed</option>
+                <option>imported</option>
+              </select></label
+            >
+            <label
+              >Source<select id="source-filter" aria-label="Run source">
+                <option value="">All sources</option>
+                <option value="tensorboard">TensorBoard</option>
+                <option value="wandb">W&B SDK</option>
+              </select></label
+            >
+            <label
+              ><input id="selected-filter" type="checkbox" /> Selected runs
+              only</label
+            >
+            <button id="clear-filters">Reset filters</button>
+          </details>
+          <div class="run-page-select">
+            <label
+              ><input
+                id="select-all"
+                type="checkbox"
+                aria-label="Select page runs"
+              />
+              Select page</label
+            ><span class="muted">Compare up to 12</span>
+          </div>
+          <div id="runs-body" role="list" aria-label="Runs"></div>
+          <div class="run-pagination">
+            <span id="run-range" aria-live="polite"></span>
+            <div>
+              <button id="runs-prev" aria-label="Previous runs page">←</button
+              ><span id="run-page"></span
+              ><button id="runs-next" aria-label="Next runs page">→</button
+              ><select id="run-page-size" aria-label="Runs per page">
+                <option value="20">20 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div
+          id="metrics-panel"
+          role="tabpanel"
+          aria-labelledby="metrics-tab"
+          hidden
+        >
+          <p class="navigator-caption">METRIC EXPLORER</p>
+          <nav id="metric-tree" aria-label="Metric categories">
+            <p class="muted">Select runs to explore their metrics.</p>
+          </nav>
         </div>
       </section>
       <div class="sidebar-bottom">
@@ -133,9 +170,11 @@
       <section id="experiments-view" class="view">
         <div class="title-row">
           <div>
-            <div class="eyebrow">OBSERVE. COMPARE. ITERATE.</div>
+            <div class="eyebrow">YOUR TRAINING, IN FOCUS</div>
             <h1>Experiments</h1>
-            <p class="subtitle">A clear view of every training run.</p>
+            <p class="subtitle">
+              Explore signals. Compare progress. Find the next insight.
+            </p>
           </div>
           <button id="connect" class="primary">+ Connect a client</button>
         </div>
@@ -194,10 +233,17 @@
             <input
               id="metric-search"
               type="search"
-              placeholder="Search all metrics…"
+              placeholder="Find a metric or /regex/…"
               aria-label="Search metrics"
             />
             <span id="metric-count" class="muted"></span>
+            <label class="density-control"
+              >Layout
+              <select id="plot-density" aria-label="Chart density">
+                <option value="compact">Compact</option>
+                <option value="comfortable">Comfortable</option>
+              </select></label
+            >
             <button id="expand-metrics">Expand all</button>
             <button id="collapse-metrics">Collapse all</button>
             <label
@@ -205,8 +251,14 @@
               starts</label
             >
           </div>
+          <p id="metric-search-error" role="status" hidden></p>
           <div id="comparison-legend" class="comparison-legend"></div>
+          <nav
+            id="metric-breadcrumbs"
+            aria-label="Current metric category"
+          ></nav>
           <div id="chart-grid" class="metric-groups"></div>
+          <button id="more-metrics" hidden>Show more metrics</button>
         </div>
       </section>
       <section id="sweeps-view" class="view" hidden>

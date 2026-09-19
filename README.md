@@ -5,6 +5,16 @@ History integrity, custom axes, reversible cleanup, and partial offline recovery
 The dashboard includes a visible project switcher, independent per-plot X axes,
 permission-preserving share links, and PNG export. See [Projects and sharing](docs/ui-sharing.md).
 
+The MiMo-inspired metric explorer adds a **Runs / Metrics** sidebar, namespace
+tree with counts and breadcrumbs, regex search, and a compact three-column layout.
+Charts mount in batches of 24 and fetch data as they become visible. Select runs
+explicitly; opening a project does not automatically load comparisons. Each plot
+has independent smoothing, linear/log Y scale and zoom under **Plot settings**.
+Cards show the latest raw value and change from the previous recorded point;
+maximizing a plot reveals full-series min/max/mean/count statistics, unaffected by
+display sampling. Existing live updates, session markers and access-controlled
+sharing are preserved.
+
 An open-source, self-hosted experiment tracker that accepts the **official `wandb` Python client**. Set `WANDB_BASE_URL` and keep your training instrumentation.
 
 The server includes a live comparison dashboard, durable metrics/config/summary/file storage, checkpoint continuation, TensorBoard scalar import, grid/random sweeps, Google/GitHub accounts, per-user keys, shared-run ingestion, advanced table inspection, and versioned artifacts. Training data stays local; the dashboard needs no CDN. OAuth sign-in connects to the configured identity provider.

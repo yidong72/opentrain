@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 import sqlite3
@@ -501,6 +502,27 @@ class Store:
                 x = self.records.inferred_axis(uid, key, stream)
                 axis_source = "paired_global_step" if x != "_step" else "logging_step"
         rows, missing_axis = self.records.points(uid, key, stream, x)
+        # Summaries describe original paired records, never display samples or
+        # smoothed values. A resumed job can rewind x, so latest is chronological.
+        valid = [r for r in rows if r["value"] is not None]
+        latest = heapq.nlargest(2, valid, key=lambda r: (r["timestamp"], r["id"]))
+        stats = {
+            "count": len(valid),
+            "last": latest[0]["value"] if latest else None,
+            "last_x": latest[0]["x"] if latest else None,
+            "last_timestamp": latest[0]["timestamp"] if latest else None,
+            "previous": latest[1]["value"] if len(latest) > 1 else None,
+            "delta": clean(latest[0]["value"] - latest[1]["value"])
+            if len(latest) > 1
+            else None,
+            "min": min((r["value"] for r in valid), default=None),
+            "max": max((r["value"] for r in valid), default=None),
+            "mean": math.fsum(r["value"] / len(valid) for r in valid)
+            if valid
+            else None,
+            "nonpositive": sum(r["value"] <= 0 for r in valid),
+            "scope": "all_paired_records",
+        }
         # A session may log a setup-only global_step=0 without this metric.
         # Use paired records for this plot, before sampling, not run-wide minima.
         session_starts = {}
@@ -537,6 +559,7 @@ class Store:
             "sampled": len(points) < len(rows),
             "axis": x,
             "axis_source": axis_source,
+            "stats": stats,
             "session_starts": session_starts,
             "missing_axis": missing_axis,
             "join": "record_identity",

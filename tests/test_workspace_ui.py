@@ -145,6 +145,7 @@ def test_train_eval_auto_axes_load_without_full_run_detail(server):
         assert page.evaluate(
             "document.querySelector('.chart[data-metric=\"eval/score\"]').liveSeries[0].points"
         ) == [[1180, 0.35]]
+        ev.locator(".plot-settings > summary").click()
         ev.locator(".plot-axis").select_option("_step")
         expect(ev.locator("svg")).to_have_attribute(
             "aria-label", pytest_regex("eval/score by _step")
@@ -263,6 +264,7 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         loss = page.locator('.chart[data-metric="train/loss"]')
         reward = page.locator('.chart[data-metric="train/reward"]')
         expect(loss.locator("svg")).to_be_visible()
+        loss.locator(".plot-settings > summary").click()
         loss.get_by_label("X axis for train/loss", exact=True).select_option(
             "train/global_step"
         )
@@ -273,6 +275,7 @@ def test_projects_plot_axes_sharing_and_png(server, tmp_path):
         expect(reward.locator("svg")).to_have_attribute(
             "aria-label", pytest_regex("train/reward by train/global_step")
         )
+        loss.locator(".plot-settings > summary").click()
         loss.locator(".plot-smoothing").fill("0.6")
         loss.locator(".plot-zoom-in").click()
         zoom = loss.get_attribute("data-domain")

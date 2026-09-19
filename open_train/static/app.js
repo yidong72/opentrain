@@ -369,8 +369,19 @@ function plotPreference(key, axis) {
     } catch {
       /* Optional preference. */
     }
+    let scale = "linear";
+    try {
+      if (
+        !state.sharedOverrides &&
+        localStorage.getItem(`open-train-scale:${key}`) === "log"
+      )
+        scale = "log";
+    } catch {
+      /* Optional preference. */
+    }
     plotPreferences.set(key, {
       smoothing,
+      scale,
       axis: savedAxis,
       domains: new Map(),
     });
@@ -383,13 +394,16 @@ function chart(key, series, axis, expanded = false) {
     heading = el("div", undefined, "chart-heading");
   card.dataset.metric = key;
   heading.append(
-    el("span", key),
+    el("span", key.split("/").at(-1)),
     el(
       "small",
       series.some((s) => s.sampled) ? "Sampled · min/max" : "All points",
     ),
   );
+  heading.title = key;
   card.append(heading);
+  const values = el("div", undefined, "plot-values");
+  card.append(values);
   const warning = el("p", "", "muted plot-warning");
   card.append(warning);
   const controls = el("div", undefined, "plot-controls");
@@ -428,6 +442,23 @@ function chart(key, series, axis, expanded = false) {
   };
   axisLabel.append(axisInput);
   controls.append(axisLabel);
+  const scaleLabel = el("label", "Y scale ");
+  const scaleInput = el("select", undefined, "plot-scale");
+  scaleInput.setAttribute("aria-label", `Y scale for ${key}`);
+  scaleInput.add(new Option("Linear", "linear"));
+  scaleInput.add(new Option("Logarithmic", "log"));
+  scaleInput.value = preference.scale || "linear";
+  scaleInput.onchange = () => {
+    preference.scale = scaleInput.value;
+    try {
+      localStorage.setItem(`open-train-scale:${key}`, preference.scale);
+    } catch {
+      /* Optional preference. */
+    }
+    draw();
+  };
+  scaleLabel.append(scaleInput);
+  controls.append(scaleLabel);
   const smoothingLabel = el("label", "Smoothing ");
   const smoothingInput = el("input");
   smoothingInput.type = "range";
@@ -454,7 +485,9 @@ function chart(key, series, axis, expanded = false) {
   action("Download PNG", "PNG", "plot-export").onclick = () =>
     exportPlot(card, key, axis, series).catch(showError);
   if (!expanded) {
-    action("Maximize plot", "⛶", "plot-maximize").onclick = () => {
+    const maximize = action("Maximize plot", "⛶", "plot-maximize");
+    heading.append(maximize);
+    maximize.onclick = () => {
       const dialog = el("dialog", undefined, "plot-dialog");
       dialog.setAttribute("aria-label", `${key} expanded plot`);
       const header = el("div", undefined, "detail-header");
@@ -476,9 +509,14 @@ function chart(key, series, axis, expanded = false) {
       scheduleLivePlots();
     };
   }
-  card.append(controls);
+  const settings = el("details", undefined, "plot-settings");
+  settings.open = expanded || document.body.dataset.density === "comfortable";
+  settings.append(el("summary", "Plot settings"), controls);
+  card.append(settings);
   const body = el("div", undefined, "plot-body");
   card.append(body);
+  const statistics = el("div", undefined, "plot-statistics");
+  if (expanded) card.append(statistics);
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   const empty = el("div", "No values for this axis.", "chart-placeholder");
@@ -546,6 +584,7 @@ function chart(key, series, axis, expanded = false) {
   card.redraw = () => {
     smoothingInput.value = preference.smoothing;
     smoothingValue.value = preference.smoothing;
+    scaleInput.value = preference.scale || "linear";
     draw();
   };
   function draw() {
@@ -554,6 +593,70 @@ function chart(key, series, axis, expanded = false) {
     // live data waits while the user is hovering, dragging or editing controls.
     svg.replaceChildren();
     legend.replaceChildren();
+    values.replaceChildren();
+    statistics.replaceChildren();
+    let table;
+    if (expanded) {
+      statistics.append(
+        el(
+          "p",
+          "All paired records · raw values · Δ versus previous recorded point",
+          "muted",
+        ),
+      );
+      table = el("table");
+      const row = el("tr");
+      for (const label of [
+        "Run",
+        "Last",
+        "Δ previous",
+        "Min",
+        "Max",
+        "Mean",
+        "Points",
+      ])
+        row.append(el("th", label));
+      const head = el("thead");
+      head.append(row);
+      table.append(head);
+      statistics.append(table);
+    }
+    const number = (v) => (v === null || v === undefined ? "—" : format(v));
+    for (const s of series) {
+      const stats = s.stats || {};
+      const row = el("div", undefined, "plot-value-row");
+      const dot = el("i", undefined, "value-dot");
+      dot.style.background = color(s.run.uid);
+      const name = el("span", s.run.display_name, "value-run");
+      const delta =
+        stats.delta == null
+          ? "—"
+          : stats.delta === 0
+            ? "no change"
+            : `${stats.delta > 0 ? "+" : ""}${number(stats.delta)}`;
+      row.title = `${s.run.display_name}\nLatest raw value: ${number(stats.last)} · ${axis}: ${number(stats.last_x)}\nΔ versus previous recorded point: ${delta}`;
+      row.append(
+        dot,
+        name,
+        el("strong", number(stats.last)),
+        el("small", delta),
+      );
+      values.append(row);
+      if (table) {
+        const tr = el("tr");
+        for (const v of [
+          s.run.display_name,
+          number(stats.last),
+          delta,
+          number(stats.min),
+          number(stats.max),
+          number(stats.mean),
+          number(stats.count),
+        ])
+          tr.append(el("td", v));
+        table.append(tr);
+      }
+    }
     tooltip.hidden = true;
     $("small", heading).textContent = series.some((s) => s.sampled)
       ? "Sampled · min/max"
@@ -573,11 +676,30 @@ function chart(key, series, axis, expanded = false) {
     warning.textContent = mixed
       ? "Runs define different axes. Select an explicit X axis on this plot."
       : `${missingAxis} metric records omitted: missing or unverified ${axis} pairing.`;
+    const logarithmic = preference.scale === "log";
+    const transform = (y) => (logarithmic ? Math.log10(y) : y);
+    const inverse = (y) => (logarithmic ? 10 ** y : y);
+    const domainKey = logarithmic ? `${axis}:log` : axis;
+    const nonpositive = logarithmic
+      ? series.reduce(
+          (n, s) =>
+            n +
+            (s.stats?.nonpositive ??
+              s.points.filter((p) => p[1] !== null && p[1] <= 0).length),
+          0,
+        )
+      : 0;
+    if (nonpositive) {
+      warning.textContent = `${warning.hidden ? "" : warning.textContent + " "}${nonpositive} nonpositive values cannot be shown on a log scale.`;
+      warning.hidden = false;
+    }
     card.dataset.total = series.reduce((n, s) => n + (s.total || 0), 0);
-    const w = expanded ? 1000 : 530,
-      h = expanded ? 520 : 235,
+    const w = expanded ? 1000 : 400,
+      h = expanded ? 360 : 210,
       pad = { l: 47, r: 15, t: 10, b: 34 };
-    let points = series.flatMap((s) => s.points).filter((p) => p[1] !== null);
+    let points = series
+      .flatMap((s) => s.points)
+      .filter((p) => p[1] !== null && (!logarithmic || p[1] > 0));
     empty.hidden = points.length > 0;
     svg.hidden = legend.hidden = hint.hidden = !points.length;
     svg.style.display = points.length ? "" : "none";
@@ -593,22 +715,22 @@ function chart(key, series, axis, expanded = false) {
     for (const [x, y] of points) {
       xmin = Math.min(xmin, x);
       xmax = Math.max(xmax, x);
-      ymin = Math.min(ymin, y);
-      ymax = Math.max(ymax, y);
+      ymin = Math.min(ymin, transform(y));
+      ymax = Math.max(ymax, transform(y));
     }
     if (xmin === xmax) xmax = xmin + 1;
     let yrange = ymax - ymin || Math.max(Math.abs(ymax) * 0.1, 0.1);
     ymin -= yrange * 0.08;
     ymax += yrange * 0.08;
     const full = [xmin, xmax, ymin, ymax];
-    const domain = preference.domains.get(axis);
+    const domain = preference.domains.get(domainKey);
     if (domain) [xmin, xmax, ymin, ymax] = domain;
     card.dataset.domain = JSON.stringify([xmin, xmax, ymin, ymax]);
     reset.disabled = zoomOut.disabled = !domain;
     function setDomain(next) {
       if (next.every((v, i) => Math.abs(v - full[i]) < 1e-10))
-        preference.domains.delete(axis);
-      else preference.domains.set(axis, next);
+        preference.domains.delete(domainKey);
+      else preference.domains.set(domainKey, next);
       draw();
     }
     function zoom(factor, cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2) {
@@ -636,11 +758,14 @@ function chart(key, series, axis, expanded = false) {
     zoomIn.onclick = () => zoom(0.5);
     zoomOut.onclick = () => zoom(2);
     reset.onclick = () => {
-      preference.domains.delete(axis);
+      preference.domains.delete(domainKey);
       draw();
     };
     const X = (x) => pad.l + ((x - xmin) / (xmax - xmin)) * (w - pad.l - pad.r),
-      Y = (y) => h - pad.b - ((y - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
+      Y = (y) =>
+        h -
+        pad.b -
+        ((transform(y) - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
     svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     svg.setAttribute("role", "img");
     svg.setAttribute(
@@ -666,7 +791,7 @@ function chart(key, series, axis, expanded = false) {
       clipRect.setAttribute(k, v);
     clip.append(clipRect);
     for (let i = 0; i <= 4; i++) {
-      const y = ymin + ((ymax - ymin) * i) / 4;
+      const y = inverse(ymin + ((ymax - ymin) * i) / 4);
       node("line", {
         x1: pad.l,
         y1: Y(y),
@@ -715,7 +840,8 @@ function chart(key, series, axis, expanded = false) {
           if (!starts.has(x)) starts.set(x, []);
           starts.get(x).push(session);
         }
-        for (const [x, labels] of starts) {
+        let lastLabelX = -Infinity;
+        for (const [x, labels] of [...starts].sort(([a], [b]) => a - b)) {
           const marker = node("line", {
             x1: X(x),
             x2: X(x),
@@ -730,6 +856,14 @@ function chart(key, series, axis, expanded = false) {
           const title = document.createElementNS(ns, "title");
           title.textContent = `${s.run.display_name}\n${labels.map(sessionDescription).join("\n")}\n${axis}: ${format(x)}`;
           marker.append(title);
+          // Keep every marker and its full tooltip; thin labels when sessions
+          // cluster so they cannot run over each other or outside the plot.
+          const label =
+            labels[0].label +
+            (labels.length > 1 ? `+${labels.length - 1}` : "");
+          if (X(x) < lastLabelX + 28 || X(x) + label.length * 6 > w - pad.r)
+            continue;
+          lastLabelX = X(x);
           node(
             "text",
             {
@@ -739,7 +873,7 @@ function chart(key, series, axis, expanded = false) {
               "font-size": 9,
               "pointer-events": "none",
             },
-            labels.map((s) => s.label).join("/"),
+            label,
           );
         }
       }
@@ -769,7 +903,7 @@ function chart(key, series, axis, expanded = false) {
       }
       for (let index = 0; index < s.points.length; index++) {
         const [x, y] = s.points[index];
-        if (y === null) {
+        if (y === null || (logarithmic && y <= 0)) {
           pen = false;
           last = null;
           continue;
@@ -789,14 +923,43 @@ function chart(key, series, axis, expanded = false) {
       }
       flush();
       drawn.push({ run: s.run, points: plotted });
-      if (s.points.length === 1 && s.points[0][1] !== null)
+      const endpoint = plotted.at(-1);
+      const endpointVisible =
+        endpoint &&
+        endpoint.x >= xmin &&
+        endpoint.x <= xmax &&
+        transform(endpoint.y) >= ymin &&
+        transform(endpoint.y) <= ymax;
+      if (endpointVisible)
         node("circle", {
-          cx: X(s.points[0][0]),
-          cy: Y(s.points[0][1]),
-          r: 3,
+          cx: X(endpoint.x),
+          cy: Y(endpoint.y),
+          r: 3.5,
+          stroke: "white",
+          "stroke-width": 1.5,
+          class: "latest-point",
           fill: color(s.run.uid),
-          "clip-path": `url(#${clipID})`,
         });
+      if (endpointVisible && series.indexOf(s) < 2)
+        node(
+          "text",
+          {
+            x: X(endpoint.x) - 7,
+            y: Math.max(
+              pad.t + 12,
+              Math.min(
+                h - pad.b - 4,
+                Y(endpoint.y) + (series.indexOf(s) ? 14 : -8),
+              ),
+            ),
+            "text-anchor": "end",
+            fill: color(s.run.uid),
+            "font-size": 10,
+            class: "endpoint-label",
+            "clip-path": `url(#${clipID})`,
+          },
+          format(endpoint.y),
+        );
     }
     svg.style.touchAction = "none";
     svg.setAttribute("tabindex", "0");
@@ -933,8 +1096,8 @@ function chart(key, series, axis, expanded = false) {
           best &&
           best.x >= xmin &&
           best.x <= xmax &&
-          best.y >= ymin &&
-          best.y <= ymax
+          transform(best.y) >= ymin &&
+          transform(best.y) <= ymax
         ) {
           const marker = markers[index];
           marker.setAttribute("cx", X(best.x));

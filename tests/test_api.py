@@ -169,7 +169,13 @@ def test_batched_series_and_compact_runs(client):
     assert actual["points"] == old["points"]
     assert actual["timestamps"] == [100 + x for x, _ in actual["points"]]
     assert actual["sampled"] and actual["total"] == 50
+    assert actual["stats"] == store.series(uid, "train/loss", limit=1500)["stats"]
+    assert actual["stats"]["count"] == 50
+    assert actual["stats"]["last"] == 0
+    assert actual["stats"]["delta"] == -6
+    assert actual["stats"]["mean"] == pytest.approx(sum(i % 7 for i in range(50)) / 50)
     assert response.json()["series"][uid]["missing"]["points"] == []
+    assert response.json()["series"][uid]["missing"]["stats"]["last"] is None
     body["x"] = "global_step"
     other = client.post("/api/series", json=body, headers=headers).json()["series"][
         uid
@@ -187,3 +193,43 @@ def test_batched_series_and_compact_runs(client):
         ).status_code
         == 422
     )
+
+
+def test_series_statistics_use_latest_record_not_largest_training_step(client):
+    import json
+
+    store = client.app.state.store
+    uid = store.upsert({"name": "rewound-stats"})[0]["uid"]
+    rows = [
+        {"_step": 0, "_timestamp": 100, "train/global_step": 100, "train/loss": 8},
+        {"_step": 1, "_timestamp": 101, "train/global_step": 50, "train/loss": 4},
+        {"_step": 2, "_timestamp": 102, "train/global_step": 51, "train/loss": 0},
+        {"_step": 3, "_timestamp": 103, "train/loss": 99},
+        {"_step": 4, "_timestamp": 104, "train/global_step": 52, "train/loss": None},
+    ]
+    store.stream(
+        uid,
+        {
+            "files": {
+                "wandb-history.jsonl": {
+                    "offset": 0,
+                    "content": [json.dumps(row) for row in rows],
+                }
+            }
+        },
+    )
+    result = store.series(uid, "train/loss", x="train/global_step")
+    assert result["missing_axis"] == 1
+    assert result["stats"] == {
+        "count": 3,
+        "last": 0,
+        "last_x": 51,
+        "last_timestamp": 102,
+        "previous": 4,
+        "delta": -4,
+        "min": 0,
+        "max": 8,
+        "mean": 4,
+        "nonpositive": 1,
+        "scope": "all_paired_records",
+    }

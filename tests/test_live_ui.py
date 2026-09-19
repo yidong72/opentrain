@@ -53,6 +53,9 @@ def test_live_updates_preserve_plots_and_only_fetch_open_visible_metrics(server)
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         # Drive the same poll function deterministically rather than racing a timer.
         page.add_init_script("window.setInterval = () => 0")
+        page.add_init_script(
+            "localStorage.setItem('open-train-density', 'comfortable')"
+        )
         errors, requests = [], []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on(
