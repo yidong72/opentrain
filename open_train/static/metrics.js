@@ -40,6 +40,15 @@ function runSessions(run) {
 }
 
 function sessionStart(session, axis, series) {
+  const boundary = series?.trajectory?.boundaries?.find(
+    (b) => b.id === session.id,
+  );
+  if (
+    Number.isFinite(boundary?.step) &&
+    (axis === boundary.axis ||
+      (axis.endsWith("global_step") && boundary.axis.endsWith("global_step")))
+  )
+    return boundary.step;
   if (series?.session_starts && session.source?.startsWith("sdk"))
     return series.session_starts[session.id]?.x;
   if (axis === "_timestamp") return session.first_wall_time ?? session.started;
@@ -64,6 +73,218 @@ function sessionForPoint(run, timestamp, sessions = runSessions(run)) {
   );
   // Never guess in an overlapping time range or when provenance is absent.
   return matches.length === 1 ? matches[0] : null;
+}
+
+function sessionCurves(series) {
+  const sessions = runSessions(series.run),
+    groups = new Map();
+  series.points.forEach((point, i) => {
+    const id = series.point_sessions?.[i];
+    const session =
+      id !== undefined
+        ? sessions.find(
+            (s) => s.id === id || s.directory === id || s.session === id,
+          ) || { id, label: id ? `Session ${id}` : "Unattributed", index: null }
+        : sessionForPoint(series.run, series.timestamps?.[i], sessions);
+    const groupKey = session?.id || session?.label || "unknown";
+    if (!groups.has(groupKey))
+      groups.set(groupKey, { ...series, session, points: [], timestamps: [] });
+    groups.get(groupKey).points.push(point);
+    groups.get(groupKey).timestamps.push(series.timestamps?.[i]);
+  });
+  return [...groups.values()];
+}
+
+function displayCurves(series, axis, smoothing, logarithmic) {
+  let curves = sessionCurves(series);
+  const info = series.trajectory;
+  const trainingAxis =
+    axis === info?.coordinate_axis ||
+    (axis.endsWith("global_step") &&
+      info?.coordinate_axis?.endsWith("global_step"));
+  if (info?.stitch_sessions && trainingAxis && curves.length > 1) {
+    const order = new Map(info.boundaries.map((b, i) => [b.id, i]));
+    const ordered = [...curves].sort(
+      (a, b) => order.get(a.session?.id) - order.get(b.session?.id),
+    );
+    // Custom/nonmonotone axes, equal-X branches and uncertain provenance stay
+    // separate. Never draw a line backwards through a checkpoint rewind.
+    if (
+      ordered.every(
+        (s, i) =>
+          order.has(s.session?.id) &&
+          s.points.every((p, j) => !j || p[0] >= s.points[j - 1][0]) &&
+          (!i || s.points[0][0] > ordered[i - 1].points.at(-1)[0]),
+      )
+    ) {
+      curves = [
+        {
+          ...series,
+          session: null,
+          continuous: true,
+          points: ordered.flatMap((s) => s.points),
+          timestamps: ordered.flatMap((s) => s.timestamps),
+          sessions: ordered.flatMap((s) => s.points.map(() => s.session)),
+        },
+      ];
+    }
+  }
+  function smooth(s, anchor = null) {
+    let last = anchor?.y ?? null;
+    const displayPoints = s.points.map(([x, raw], i) => {
+      const valid = Number.isFinite(raw) && (!logarithmic || raw > 0);
+      last = valid
+        ? last === null
+          ? raw
+          : last * smoothing + raw * (1 - smoothing)
+        : null;
+      return {
+        x,
+        y: last,
+        raw,
+        session: s.sessions?.[i] || s.session,
+        timestamp: s.timestamps?.[i],
+      };
+    });
+    return { ...s, displayPoints, smoothingAnchor: anchor };
+  }
+  if (
+    info?.view === "all" &&
+    info.resume_smoothing &&
+    trainingAxis &&
+    smoothing > 0
+  ) {
+    const boundaries = new Map(info.boundaries.map((b) => [b.id, b]));
+    const valid = curves.every(
+      (s) =>
+        boundaries.has(s.session?.id) &&
+        s.points.every(
+          (p, i) =>
+            (!i || p[0] >= s.points[i - 1][0]) &&
+            (boundaries.get(s.session.id).step == null ||
+              p[0] >= boundaries.get(s.session.id).step),
+        ),
+    );
+    if (valid) {
+      const byId = new Map(curves.map((s) => [s.session.id, s]));
+      const results = new Map();
+      let prefix = [];
+      for (const boundary of info.boundaries) {
+        // Rewind the smoothing lineage, not the displayed data. This discards
+        // every abandoned tail from the seed, including on repeated rewinds.
+        if (boundary.step != null) {
+          let lo = 0,
+            hi = prefix.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (prefix[mid].x < boundary.step) lo = mid + 1;
+            else hi = mid;
+          }
+          prefix.length = lo;
+        }
+        const curve = byId.get(boundary.id);
+        if (!curve) continue;
+        const previous = prefix.at(-1);
+        const anchor =
+          Number.isFinite(previous?.y) && previous.x < curve.points[0][0]
+            ? previous
+            : null;
+        const result = smooth(curve, anchor);
+        results.set(boundary.id, result);
+        prefix.push(...result.displayPoints);
+      }
+      return curves.map((s) => results.get(s.session.id));
+    }
+  }
+  return curves.map((s) => smooth(s));
+}
+
+function axisTicks(min, max, logarithmic = false) {
+  const niceLinear = (lo, hi) => {
+    const rough = (hi - lo) / 4;
+    const power = 10 ** Math.floor(Math.log10(rough));
+    const step = [1, 2, 2.5, 5, 10].find((v) => v * power >= rough) * power;
+    if (!(step > 0) || !Number.isFinite(step)) return [];
+    const start = Math.ceil(lo / step - 1e-10);
+    return Array.from(
+      {
+        length: Math.min(
+          20,
+          Math.max(0, Math.floor(hi / step + 1e-10) - start + 1),
+        ),
+      },
+      (_, i) => Number(((start + i) * step).toPrecision(12)),
+    );
+  };
+  if (!logarithmic) return niceLinear(min, max);
+  const low = 10 ** min,
+    high = 10 ** max;
+  // Narrow ranges still use a true log transform, with readable numeric ticks.
+  if (max - min < 1) return niceLinear(low, high).filter((v) => v > 0);
+  const ticks = [];
+  const stride = Math.max(1, Math.ceil((max - min) / 6));
+  for (let e = Math.floor(min); e <= Math.ceil(max); e += stride)
+    for (const m of max - min <= 2 ? [1, 2, 5] : [1]) {
+      const value = m * 10 ** e;
+      if (value >= low && value <= high) ticks.push(value);
+    }
+  return ticks;
+}
+
+// Session ordinals share a palette across runs; line style and A/B labels
+// identify the run. Session S2 in two runs does not imply the same checkpoint.
+function sessionInk(session) {
+  let index = session?.index;
+  if (!Number.isInteger(index)) {
+    index = 0;
+    for (const c of session?.id || "unattributed")
+      index = (index * 31 + c.charCodeAt(0)) >>> 0;
+  }
+  const hue = (210 + index * 137.508) % 360;
+  return `hsl(${hue.toFixed(2)} 68% ${hue >= 35 && hue < 180 ? 35 : 44}%)`;
+}
+
+function curveAppearance(run, session, series) {
+  const index = Math.max(
+    0,
+    series.findIndex((s) => s.run.uid === run.uid),
+  );
+  const all = series[0]?.trajectory?.view === "all";
+  const patterns = [
+    "none",
+    "8 3",
+    "2 3",
+    "10 3 2 3",
+    "12 4",
+    "4 3",
+    "8 2 2 2",
+    "1 3",
+    "14 3 3 3",
+    "6 2 6 5",
+    "3 2 1 2",
+    "12 3 1 3 1 3",
+  ];
+  return {
+    color: all ? sessionInk(session) : color(run.uid),
+    dash: all ? patterns[index % patterns.length] : "none",
+    runLabel: String.fromCharCode(65 + index),
+  };
+}
+
+function sessionLegendEntries(series) {
+  return series
+    .flatMap((s) =>
+      sessionCurves(s).map((curve) => ({
+        run: s.run,
+        session: curve.session,
+        ...curveAppearance(s.run, curve.session, series),
+      })),
+    )
+    .sort(
+      (a, b) =>
+        a.runLabel.localeCompare(b.runLabel) ||
+        (a.session?.index ?? Infinity) - (b.session?.index ?? Infinity),
+    );
 }
 
 function renderSessions(content, run) {
@@ -131,6 +352,7 @@ function renderSessions(content, run) {
 
 function initMetrics() {
   initNavigator();
+  $("#session-view").onchange = () => renderCharts().catch(showError);
   try {
     const saved = JSON.parse(
       localStorage.getItem("open-train-metric-groups") || "[]",
@@ -178,6 +400,7 @@ async function renderCharts() {
     metricView.category,
     metricView.limit,
     $("#show-sessions").checked,
+    $("#session-view").value,
   ]);
   if (
     signature === metricView.signature &&
@@ -337,6 +560,7 @@ async function renderCharts() {
       run.updated,
       key,
       plotPreference(key).axis || axis,
+      $("#session-view").value,
     ]);
   function paint(slot) {
     const key = slot.dataset.metric;
@@ -392,6 +616,7 @@ async function renderCharts() {
           keys,
           x: plotPreference(keys[0]).axis || axis,
           limit: 800,
+          view: $("#session-view").value,
         }),
       });
       if (generation !== state.generation) return;

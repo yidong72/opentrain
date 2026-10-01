@@ -9,6 +9,7 @@ import secrets
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -45,6 +46,7 @@ class SeriesBatch(BaseModel):
     runs: list[str] = Field(min_length=1, max_length=12)
     keys: list[str] = Field(min_length=1, max_length=12)
     x: str = "auto"
+    view: Literal["all", "latest"] = "all"
     limit: int = Field(default=800, ge=10, le=1500)
 
 
@@ -395,6 +397,7 @@ def create_app(data_dir=None, token=None, public_url=None):
         # preserve workspace reader access and authorize every run before returning data.
         read_token = writing.set(False)
         try:
+            trajectory_cache = {}
             for uid in body.runs:
                 if not store.get(uid=uid):
                     raise HTTPException(404, "Run not found")
@@ -408,6 +411,8 @@ def create_app(data_dir=None, token=None, public_url=None):
                             body.limit,
                             body.x,
                             include_timestamps=True,
+                            view=body.view,
+                            trajectory_cache=trajectory_cache,
                         )
                         for key in dict.fromkeys(body.keys)
                     }
@@ -458,11 +463,12 @@ def create_app(data_dir=None, token=None, public_url=None):
         key: str,
         stream: str = "history",
         x: str = "auto",
+        view: Literal["all", "latest"] = "all",
         limit: int = Query(1500, ge=10, le=10000),
     ):
         if not store.get(uid=uid):
             raise HTTPException(404, "Run not found")
-        return store.series(uid, key, stream, limit, x)
+        return store.series(uid, key, stream, limit, x, view=view)
 
     @app.get("/api/runs/{uid}/history")
     def history(

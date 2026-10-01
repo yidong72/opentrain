@@ -15,6 +15,17 @@ maximizing a plot reveals full-series min/max/mean/count statistics, unaffected 
 display sampling. Existing live updates, session markers and access-controlled
 sharing are preserved.
 
+For overlapping checkpoint resumes, use **Sessions → Latest trajectory** to
+hide abandoned earlier-session tails, or **All sessions** to compare the
+overlapping attempts. Neither view deletes data. Latest trajectory connects safe
+sequential resumes and carries smoothing forward; All sessions keeps attempts
+separate. Statistics and shared links follow the selected view.
+All-session charts use session colors and run line styles, with a grouped legend
+to highlight individual sessions or entire runs without hiding their neighbors.
+Their smoothing inherits checkpoint-prefix state while preserving overlapping
+branches; it does not restart from the first raw value at every resume.
+See [resume boundaries and exact checkpoint metadata](docs/ui-sharing.md#overlapping-resumed-sessions).
+
 An open-source, self-hosted experiment tracker that accepts the **official `wandb` Python client**. Set `WANDB_BASE_URL` and keep your training instrumentation.
 
 The server includes a live comparison dashboard, durable metrics/config/summary/file storage, checkpoint continuation, TensorBoard scalar import, grid/random sweeps, Google/GitHub accounts, per-user keys, shared-run ingestion, advanced table inspection, and versioned artifacts. Training data stays local; the dashboard needs no CDN. OAuth sign-in connects to the configured identity provider.
@@ -61,7 +72,7 @@ Runs live in a scrollable left sidebar with name/ID/group/tag search, project/st
 
 Metrics are organized into collapsible slash-separated namespaces (`train`, `eval`, and nested groups). Search metrics by any part of their name; every metric is accessible, without a first-12 cutoff. Charts load progressively as they enter the viewport, with batched queries and revision-aware caching. Each plot has its own smoothing slider (remembered in the browser), zoom-in/out and reset buttons, rectangle-drag zoom, and a maximize button. Ctrl/Command + scroll zooms around the cursor; double-click resets. Focus a plot and use `+`, `-`, or `0` for keyboard zoom/reset. Expanded and normal views share that plot's settings. Zoom operates on the displayed, potentially sampled series; the sampling indicator remains visible. Plot controls reuse cached data without refetching other charts. Hover shows a crosshair and a colored marker on each displayed curve; when smoothing is enabled, both smoothed and raw values are shown.
 
-TensorBoard imports with session provenance show session-count badges, a **Sessions** detail tab, and optional session-start markers. Session labels and alternating solid/dashed segments use recorded timestamp ranges; ambiguous or missing provenance is not guessed. A merged run remains one logical experiment. Older imports need session timestamps added before points can be assigned to sessions; separate SDK run IDs remain distinct comparisons.
+TensorBoard imports with session provenance show session-count badges, a **Sessions** detail tab, and optional session-start markers. Session labels use recorded provenance and timestamp ranges; ambiguous or missing provenance is not guessed. **All sessions** uses different session colors and one line style per run. A merged run remains one logical experiment. Older imports need session timestamps added before points can be assigned to sessions; separate SDK run IDs remain distinct comparisons.
 
 ## Unreliable networks / client-side caching
 

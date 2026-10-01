@@ -102,7 +102,7 @@ def test_metric_studio(server):
         shared.close()
         plot.locator(".plot-maximize").click()
         modal = page.locator(".plot-dialog")
-        expect(modal.locator(".plot-statistics")).to_contain_text("All paired records")
+        expect(modal.locator(".plot-statistics")).to_contain_text("Latest trajectory")
         expect(modal.locator("td")).to_have_count(7)
         assert modal.locator("td").all_text_contents() == [
             "studio-run",

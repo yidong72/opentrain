@@ -11,6 +11,7 @@ function validateSharedView(value) {
     !text(value.project) ||
     !text(value.axis) ||
     !text(value.search) ||
+    ![undefined, "all", "latest"].includes(value.sessionView) ||
     !(value.category === undefined || text(value.category)) ||
     !(value.metric === null || text(value.metric)) ||
     !Array.isArray(value.plots) ||
@@ -90,6 +91,7 @@ function validateSharedView(value) {
     groups,
     colors: sharedColors,
     sessions: value.sessions !== false,
+    sessionView: value.sessionView || "all",
     allOpen: typeof value.allOpen === "boolean" ? value.allOpen : null,
   };
 }
@@ -170,6 +172,7 @@ function restoreSharedView() {
     $("#x-axis").add(new Option(view.axis, view.axis));
   $("#x-axis").value = view.axis;
   $("#show-sessions").checked = view.sessions;
+  $("#session-view").value = view.sessionView;
   $("#project-filter").value = view.project;
   metricView.open = new Map(view.groups);
   metricView.category = view.category;
@@ -206,6 +209,7 @@ function shareView(metric = null) {
       category: metricView.category,
       metric: metric || state.sharedMetric || null,
       sessions: $("#show-sessions").checked,
+      sessionView: $("#session-view").value,
       colors: [...state.selected].map((id) => [id, color(id)]),
       plots: [...plotPreferences]
         .filter(([key]) => !metric || key === metric)
@@ -275,6 +279,7 @@ async function loadPlot(key) {
       keys: [key],
       x: axis,
       limit: 800,
+      view: $("#session-view").value,
     }),
   });
   const details = await Promise.all(selected.map((r) => plotDetail(r.uid)));
@@ -310,6 +315,22 @@ async function loadPlot(key) {
 async function exportPlot(card, key, axis, series) {
   const smoothing = plotPreference(key).smoothing;
   const scale = plotPreference(key).scale || "linear";
+  const allSessions = series[0]?.trajectory?.view === "all";
+  const focus = card.dataset.sessionFocus
+    ? JSON.parse(card.dataset.sessionFocus)
+    : null;
+  const focusedRun = focus && series.find((s) => s.run.uid === focus.run);
+  const focusCaption = focusedRun
+    ? ` Highlight: ${focusedRun.run.display_name}${focus.session ? " / " + (sessionLegendEntries(series).find((e) => e.run.uid === focus.run && e.session?.id === focus.session)?.session?.label || focus.session) : ""}; other curves faded.`
+    : "";
+  const sessionEntries = allSessions ? sessionLegendEntries(series) : [];
+  const exportRows = [];
+  for (const s of series) {
+    exportRows.push({ run: s, ink: curveAppearance(s.run, null, series) });
+    const entries = sessionEntries.filter((e) => e.run.uid === s.run.uid);
+    for (let i = 0; i < entries.length; i += 8)
+      exportRows.push({ sessions: entries.slice(i, i + 8) });
+  }
   const original = $("svg", card);
   if (!original) throw Error("There are no plotted values to export.");
   const svg = original.cloneNode(true);
@@ -334,7 +355,7 @@ async function exportPlot(card, key, axis, series) {
     await image.decode();
     const canvas = document.createElement("canvas");
     canvas.width = width;
-    canvas.height = plotHeight + 160 + series.length * 26;
+    canvas.height = plotHeight + 160 + exportRows.length * 26;
     const context = canvas.getContext("2d");
     context.fillStyle = "white";
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -343,28 +364,58 @@ async function exportPlot(card, key, axis, series) {
     context.fillText(key, 40, 32, width - 80);
     context.font = "14px Arial";
     context.fillText(
-      `X: ${axis} · Y: ${scale} · EMA ${smoothing} · ${series.some((s) => s.sampled) ? "Sampled (min/max)" : "All returned points"} · ${new Date().toISOString()}`,
+      `X: ${axis} · Y: ${scale} · EMA ${smoothing} · ${series[0]?.trajectory?.view === "latest" ? "Latest trajectory" : "All sessions"} · ${series.some((s) => s.sampled) ? "Sampled (min/max)" : "All returned points"} · ${new Date().toISOString()}`,
       40,
       58,
       width - 80,
     );
     const omitted = series.reduce((n, s) => n + (s.missing_axis || 0), 0);
     context.fillText(
-      `${omitted} records omitted for missing/unverified axis pairing.${scale === "log" ? " Nonpositive values omitted on log scale." : ""} Export reflects current zoom.`,
+      `${omitted} records omitted for missing/unverified axis pairing.${scale === "log" ? " Nonpositive values omitted on log scale." : ""} Export reflects current zoom.${card.dataset.continuous === "true" ? " Continuous retained trajectory." : ""}${card.dataset.resumeSmoothing === "true" ? " EMA inherits resume prefixes." : ""}${smoothing && series.some((s) => s.sampled) ? " EMA approximate on sampled points." : ""}${focusCaption}`,
       40,
       80,
+      width - 80,
     );
     context.drawImage(image, 40, 95);
-    series.forEach((s, i) => {
-      context.fillStyle = color(s.run.uid);
-      context.fillRect(40, plotHeight + 122 + i * 26, 22, 4);
-      context.fillStyle = "#172033";
-      context.fillText(
-        `${s.run.display_name} (${s.points.length}/${s.total} returned points)`,
-        72,
-        plotHeight + 130 + i * 26,
-        width - 110,
-      );
+    exportRows.forEach((row, i) => {
+      const y = plotHeight + 130 + i * 26;
+      function swatch(x, ink) {
+        context.strokeStyle = ink.color;
+        context.lineWidth = 2;
+        context.setLineDash(
+          ink.dash === "none" ? [] : ink.dash.split(" ").map(Number),
+        );
+        context.beginPath();
+        context.moveTo(x, y - 5);
+        context.lineTo(x + 25, y - 5);
+        context.stroke();
+        context.setLineDash([]);
+      }
+      if (row.run) {
+        const s = row.run;
+        swatch(40, {
+          ...row.ink,
+          color: allSessions ? "#425466" : color(s.run.uid),
+        });
+        context.fillStyle = "#172033";
+        context.fillText(
+          `${allSessions ? row.ink.runLabel + " · " : ""}${s.run.display_name} (${s.points.length}/${s.total} returned points)${allSessions ? " · color = session, pattern = run" : ""}`,
+          75,
+          y,
+          width - 110,
+        );
+      } else
+        row.sessions.forEach((entry, j) => {
+          const x = 40 + j * 150;
+          swatch(x, entry);
+          context.fillStyle = entry.color;
+          context.fillText(
+            entry.session?.label || "Unattributed",
+            x + 31,
+            y,
+            112,
+          );
+        });
     });
     const blob = await new Promise((resolve) =>
       canvas.toBlob(resolve, "image/png"),

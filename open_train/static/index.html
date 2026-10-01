@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Open Train · Experiments</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260919-studio2" />
-    <link rel="stylesheet" href="/static/studio.css?v=20260919-studio2" />
-    <script src="/static/navigator.js?v=20260919-studio2" defer></script>
-    <script src="/static/metrics.js?v=20260919-studio2" defer></script>
-    <script src="/static/workspace.js?v=20260919-studio2" defer></script>
-    <script src="/static/live.js?v=20260919-studio2" defer></script>
-    <script src="/static/app.js?v=20260919-studio2" defer></script>
-    <script src="/static/account.js?v=20260919-studio2" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20260919-branch-ema1" />
+    <link rel="stylesheet" href="/static/studio.css?v=20260919-branch-ema1" />
+    <script src="/static/navigator.js?v=20260919-branch-ema1" defer></script>
+    <script src="/static/metrics.js?v=20260919-branch-ema1" defer></script>
+    <script src="/static/workspace.js?v=20260919-branch-ema1" defer></script>
+    <script src="/static/live.js?v=20260919-branch-ema1" defer></script>
+    <script src="/static/app.js?v=20260919-branch-ema1" defer></script>
+    <script src="/static/account.js?v=20260919-branch-ema1" defer></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -226,6 +226,13 @@
                 </select></label
               >
               <button id="share-view">Share view</button>
+              <label
+                >Sessions
+                <select id="session-view" aria-label="Session view">
+                  <option value="latest">Latest trajectory</option>
+                  <option value="all">All sessions</option>
+                </select></label
+              >
             </div>
           </div>
           <div id="metric-toolbar" class="metric-toolbar">

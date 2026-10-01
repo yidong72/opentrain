@@ -490,6 +490,8 @@ class Store:
         limit=1500,
         x="auto",
         include_timestamps=False,
+        view="all",
+        trajectory_cache=None,
     ):
         run = self.assert_run(uid)
         from .records import axis_for
@@ -502,6 +504,27 @@ class Store:
                 x = self.records.inferred_axis(uid, key, stream)
                 axis_source = "paired_global_step" if x != "_step" else "logging_step"
         rows, missing_axis = self.records.points(uid, key, stream, x)
+        from . import trajectories
+
+        if view not in ("all", "latest"):
+            raise ValueError("Unknown session view")
+        original_total = len(rows)
+        trajectory = {
+            "view": view,
+            "hidden_points": 0,
+            "boundaries": [],
+            "warning": None,
+        }
+        if stream == "history" and (
+            view == "latest" or len({r["session"] for r in rows}) > 1
+        ):
+            cache = trajectory_cache if trajectory_cache is not None else {}
+            namespace = key.rsplit("/", 1)[0] if "/" in key else ""
+            declared = axis_for(run["config"], key, default=None)
+            cache_key = (uid, namespace, declared)
+            if cache_key not in cache:
+                cache[cache_key] = trajectories.context(self, uid, key, declared)
+            rows, trajectory = trajectories.select(rows, cache[cache_key], view)
         # Summaries describe original paired records, never display samples or
         # smoothed values. A resumed job can rewind x, so latest is chronological.
         valid = [r for r in rows if r["value"] is not None]
@@ -521,7 +544,7 @@ class Store:
             if valid
             else None,
             "nonpositive": sum(r["value"] <= 0 for r in valid),
-            "scope": "all_paired_records",
+            "scope": "latest_trajectory" if view == "latest" else "all_paired_records",
         }
         # A session may log a setup-only global_step=0 without this metric.
         # Use paired records for this plot, before sampling, not run-wide minima.
@@ -537,29 +560,24 @@ class Store:
                 )
             ):
                 session_starts[sid] = {"x": row["x"], "timestamp": row["timestamp"]}
-        points = [[r["x"], r["value"], r["timestamp"]] for r in rows]
-        # Min/max buckets preserve spikes as well as endpoints while bounding response size.
-        if len(points) > limit:
-            result = [points[0]]
-            width = math.ceil((len(points) - 2) / max(1, (limit - 2) // 2))
-            for start in range(1, len(points) - 1, width):
-                bucket = points[start : min(start + width, len(points) - 1)]
-                valid = [(i, p) for i, p in enumerate(bucket) if p[1] is not None]
-                if valid:
-                    selected = {
-                        min(valid, key=lambda p: p[1][1])[0],
-                        max(valid, key=lambda p: p[1][1])[0],
-                    }
-                    result.extend(bucket[i] for i in sorted(selected))
-            result.append(points[-1])
-            points = result
+        sampled, omitted_sessions = trajectories.sample(rows, limit)
+        points = [[r["x"], r["value"], r["timestamp"]] for r in sampled]
+        if omitted_sessions:
+            trajectory["stitch_sessions"] = False
+            trajectory["resume_smoothing"] = False
+            trajectory["warning"] = (
+                trajectory["warning"] or ""
+            ) + f" {omitted_sessions} sessions not plotted: point limit too small."
         result = {
             "points": [p[:2] for p in points],
             "total": len(rows),
+            "original_total": original_total,
             "sampled": len(points) < len(rows),
             "axis": x,
             "axis_source": axis_source,
             "stats": stats,
+            "trajectory": trajectory,
+            "point_sessions": [r["session"] for r in sampled],
             "session_starts": session_starts,
             "missing_axis": missing_axis,
             "join": "record_identity",

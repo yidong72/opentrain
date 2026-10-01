@@ -406,6 +406,27 @@ function chart(key, series, axis, expanded = false) {
   card.append(values);
   const warning = el("p", "", "muted plot-warning");
   card.append(warning);
+  const trajectoryNote = el("p", "", "muted trajectory-note");
+  const viewLabel = el("label", "View ", "plot-view-label");
+  const viewInput = el("select", undefined, "plot-session-view");
+  viewInput.setAttribute("aria-label", `Trajectory view for ${key}`);
+  viewInput.add(new Option("Latest trajectory · continuous", "latest"));
+  viewInput.add(new Option("All sessions · colored", "all"));
+  viewInput.value = series[0]?.trajectory?.view || "latest";
+  viewInput.title =
+    "Changes the session view for all plots. Latest follows retained checkpoint history; All shows overlapping attempts in session colors.";
+  viewInput.onchange = async () => {
+    $("#session-view").value = viewInput.value;
+    try {
+      await renderCharts();
+      if (expanded && card.isConnected) card.replaceWith(await loadPlot(key));
+    } catch (error) {
+      showError(error);
+    }
+  };
+  viewLabel.append(viewInput);
+  card.append(viewLabel);
+  card.append(trajectoryNote);
   const controls = el("div", undefined, "plot-controls");
   const axisLabel = el("label", "X axis ");
   const axisInput = el("select");
@@ -521,13 +542,21 @@ function chart(key, series, axis, expanded = false) {
   const svg = document.createElementNS(ns, "svg");
   const empty = el("div", "No values for this axis.", "chart-placeholder");
   const legend = el("div", undefined, "chart-legend");
+  const sessionLegend = el("details", undefined, "session-legend");
+  sessionLegend.open = expanded;
+  const sessionLegendBody = el("div", undefined, "session-legend-body");
+  sessionLegend.append(
+    el("summary", "Session colors · run line styles"),
+    sessionLegendBody,
+  );
+  let pinnedCurve = null;
   const hint = el(
     "small",
     "Drag to zoom · Ctrl/⌘ + scroll to zoom · double-click to reset",
     "plot-hint",
   );
   const tooltip = el("div", undefined, "tooltip");
-  body.append(empty, svg, legend, hint, tooltip);
+  body.append(empty, svg, legend, sessionLegend, hint, tooltip);
   let wheelHandler,
     pending,
     pointerInside = false,
@@ -595,12 +624,141 @@ function chart(key, series, axis, expanded = false) {
     legend.replaceChildren();
     values.replaceChildren();
     statistics.replaceChildren();
+    const latestView = series[0]?.trajectory?.view === "latest";
+    sessionLegend.hidden = latestView;
+    legend.classList.toggle("all-session-run-legend", !latestView);
+    const curveNodes = [];
+    const legendButtons = [];
+    function emphasize(focus = pinnedCurve) {
+      for (const item of curveNodes) {
+        const match =
+          !focus ||
+          (item.run === focus.run &&
+            (!focus.session || item.session === focus.session));
+        item.node.setAttribute("opacity", match ? "1" : "0.12");
+      }
+      for (const { button, target } of legendButtons)
+        button.setAttribute(
+          "aria-pressed",
+          String(
+            !!pinnedCurve &&
+              pinnedCurve.run === target.run &&
+              pinnedCurve.session === target.session,
+          ),
+        );
+      card.dataset.sessionFocus = pinnedCurve
+        ? JSON.stringify(pinnedCurve)
+        : "";
+    }
+    function focusButton(button, target) {
+      legendButtons.push({ button, target });
+      button.onpointerenter = button.onfocus = () => emphasize(target);
+      button.onpointerleave = button.onblur = () => emphasize();
+      button.onclick = () => {
+        pinnedCurve =
+          pinnedCurve?.run === target.run &&
+          pinnedCurve?.session === target.session
+            ? null
+            : target;
+        emphasize();
+      };
+    }
+    const legendEntries = latestView ? [] : sessionLegendEntries(series);
+    const legendSignature = JSON.stringify(
+      legendEntries.map((e) => [
+        e.run.uid,
+        e.run.display_name,
+        e.session?.id,
+        e.session?.label,
+        e.color,
+        e.dash,
+      ]),
+    );
+    // Keep focused controls mounted during live updates.
+    if (sessionLegend.dataset.signature !== legendSignature) {
+      sessionLegend.dataset.signature = legendSignature;
+      sessionLegendBody.replaceChildren();
+      sessionLegendBody.append(
+        el(
+          "p",
+          "Color = session within each run. Line style = run. Hover to highlight; click to pin. S2 in different runs is not a matched checkpoint.",
+          "muted",
+        ),
+      );
+      const resetFocus = el("button", "Show all", "session-focus-reset");
+      resetFocus.onclick = () => {
+        pinnedCurve = null;
+        emphasize();
+      };
+      sessionLegendBody.append(resetFocus);
+      for (const s of series) {
+        const group = el("div", undefined, "session-legend-run");
+        const entries = legendEntries.filter((e) => e.run.uid === s.run.uid);
+        if (!entries.length) continue;
+        const runButton = el(
+          "button",
+          `${entries[0].runLabel} · ${s.run.display_name}`,
+          "session-run-focus",
+        );
+        runButton.dataset.run = s.run.uid;
+        group.append(runButton);
+        const chips = el("div", undefined, "session-chips");
+        for (const entry of entries) {
+          const chip = el(
+            "button",
+            entry.session?.label || "Unattributed",
+            "session-chip",
+          );
+          chip.dataset.run = s.run.uid;
+          chip.dataset.session = entry.session?.id || "unknown";
+          chip.style.setProperty("--session-ink", entry.color);
+          chip.title = `${entry.runLabel} · ${s.run.display_name} · ${entry.session?.label || "Unattributed"}\n${entry.session?.id || "No session identity"}`;
+          chips.append(chip);
+        }
+        group.append(chips);
+        sessionLegendBody.append(group);
+      }
+    }
+    for (const button of $$(
+      ".session-chip, .session-run-focus",
+      sessionLegendBody,
+    ))
+      focusButton(button, {
+        run: button.dataset.run,
+        session: button.dataset.session || null,
+      });
+    const resetFocus = $(".session-focus-reset", sessionLegendBody);
+    if (resetFocus)
+      resetFocus.onclick = () => {
+        pinnedCurve = null;
+        emphasize();
+      };
+    empty.textContent = latestView
+      ? "No values in the latest trajectory for this axis."
+      : "No values for this axis.";
+    const hiddenPoints = series.reduce(
+      (n, s) => n + (s.trajectory?.hidden_points || 0),
+      0,
+    );
+    const trajectoryWarnings = [
+      ...new Set(series.map((s) => s.trajectory?.warning).filter(Boolean)),
+    ];
+    trajectoryNote.textContent = `${latestView ? "Latest trajectory" : "All sessions"}${hiddenPoints ? ` · ${hiddenPoints} earlier-tail records hidden (not deleted)` : ""}${trajectoryWarnings.length ? ". " + trajectoryWarnings.join(" ") : ""}`;
+    trajectoryNote.title = series
+      .flatMap((s) =>
+        (s.trajectory?.boundaries || []).map(
+          (b) =>
+            `${s.run.display_name} · ${b.id}: ${b.axis} ${b.step ?? "unknown"} (${b.source})`,
+        ),
+      )
+      .join("\n");
+    trajectoryNote.hidden = !hiddenPoints && !trajectoryWarnings.length;
     let table;
     if (expanded) {
       statistics.append(
         el(
           "p",
-          "All paired records · raw values · Δ versus previous recorded point",
+          `${latestView ? "Latest trajectory" : "All paired records"} · raw values · Δ versus previous recorded point`,
           "muted",
         ),
       );
@@ -626,8 +784,12 @@ function chart(key, series, axis, expanded = false) {
       const stats = s.stats || {};
       const row = el("div", undefined, "plot-value-row");
       const dot = el("i", undefined, "value-dot");
-      dot.style.background = color(s.run.uid);
-      const name = el("span", s.run.display_name, "value-run");
+      dot.style.background = latestView ? color(s.run.uid) : "#425466";
+      const name = el(
+        "span",
+        `${latestView ? "" : curveAppearance(s.run, null, series).runLabel + " · "}${s.run.display_name}`,
+        "value-run",
+      );
       const delta =
         stats.delta == null
           ? "—"
@@ -677,9 +839,28 @@ function chart(key, series, axis, expanded = false) {
       ? "Runs define different axes. Select an explicit X axis on this plot."
       : `${missingAxis} metric records omitted: missing or unverified ${axis} pairing.`;
     const logarithmic = preference.scale === "log";
+    const smoothing = preference.smoothing;
+    const curves = series.flatMap((s) =>
+      displayCurves(s, axis, smoothing, logarithmic),
+    );
+    const continuous = curves.some((s) => s.continuous);
+    card.dataset.continuous = String(continuous);
+    const inheritedSmoothing = curves.some((s) => s.smoothingAnchor);
+    card.dataset.resumeSmoothing = String(inheritedSmoothing);
+    viewInput.value = latestView ? "latest" : "all";
+    trajectoryNote.textContent += latestView
+      ? continuous
+        ? " · Continuous across retained resumes; EMA carries forward."
+        : " · Session boundaries kept where continuity cannot be established."
+      : " · Session colors + run line styles. Open the legend below to highlight.";
+    if (!latestView && smoothing)
+      trajectoryNote.textContent += inheritedSmoothing
+        ? " EMA inherits the retained prefix before each resume boundary; overlapping tails stay separate."
+        : " EMA starts independently where resume lineage is unavailable.";
+    if (smoothing && series.some((s) => s.sampled))
+      trajectoryNote.textContent += " EMA is approximate on sampled points.";
     const transform = (y) => (logarithmic ? Math.log10(y) : y);
-    const inverse = (y) => (logarithmic ? 10 ** y : y);
-    const domainKey = logarithmic ? `${axis}:log` : axis;
+    const domainKey = `${axis}${latestView ? ":latest" : ""}${logarithmic ? ":log" : ""}`;
     const nonpositive = logarithmic
       ? series.reduce(
           (n, s) =>
@@ -697,9 +878,10 @@ function chart(key, series, axis, expanded = false) {
     const w = expanded ? 1000 : 400,
       h = expanded ? 360 : 210,
       pad = { l: 47, r: 15, t: 10, b: 34 };
-    let points = series
-      .flatMap((s) => s.points)
-      .filter((p) => p[1] !== null && (!logarithmic || p[1] > 0));
+    let points = curves
+      .flatMap((s) => s.displayPoints)
+      .filter((p) => p.y !== null)
+      .map((p) => [p.x, p.y]);
     empty.hidden = points.length > 0;
     svg.hidden = legend.hidden = hint.hidden = !points.length;
     svg.style.display = points.length ? "" : "none";
@@ -790,8 +972,7 @@ function chart(key, series, axis, expanded = false) {
     }))
       clipRect.setAttribute(k, v);
     clip.append(clipRect);
-    for (let i = 0; i <= 4; i++) {
-      const y = inverse(ymin + ((ymax - ymin) * i) / 4);
+    for (const y of axisTicks(ymin, ymax, logarithmic)) {
       node("line", {
         x1: pad.l,
         y1: Y(y),
@@ -806,11 +987,15 @@ function chart(key, series, axis, expanded = false) {
           x: pad.l - 9,
           y: Y(y) + 3,
           "text-anchor": "end",
-          fill: "#a2aea6",
+          fill: "#718078",
           "font-size": 9,
+          class: "y-tick",
+          "data-value": y,
         },
         format(y),
       );
+    }
+    for (let i = 0; i <= 4; i++) {
       const x = xmin + ((xmax - xmin) * i) / 4;
       node(
         "text",
@@ -818,7 +1003,7 @@ function chart(key, series, axis, expanded = false) {
           x: X(x),
           y: h - 14,
           "text-anchor": "middle",
-          fill: "#a2aea6",
+          fill: "#718078",
           "font-size": 9,
         },
         axis === "_timestamp"
@@ -829,7 +1014,6 @@ function chart(key, series, axis, expanded = false) {
           : format(x),
       );
     }
-    const smoothing = preference.smoothing;
     const drawn = [];
     if ($("#show-sessions").checked) {
       for (const s of series) {
@@ -846,10 +1030,10 @@ function chart(key, series, axis, expanded = false) {
             x1: X(x),
             x2: X(x),
             y1: pad.t,
-            y2: h - pad.b,
-            stroke: color(s.run.uid),
+            y2: pad.t + 6,
+            stroke: latestView ? color(s.run.uid) : sessionInk(labels[0]),
             "stroke-dasharray": "3 5",
-            opacity: 0.4,
+            opacity: 0.7,
             class: "session-start",
             "pointer-events": "stroke",
           });
@@ -869,7 +1053,7 @@ function chart(key, series, axis, expanded = false) {
             {
               x: X(x) + 3,
               y: pad.t + 10 + series.indexOf(s) * 11,
-              fill: color(s.run.uid),
+              fill: latestView ? color(s.run.uid) : sessionInk(labels[0]),
               "font-size": 9,
               "pointer-events": "none",
             },
@@ -878,51 +1062,54 @@ function chart(key, series, axis, expanded = false) {
         }
       }
     }
-    for (const s of series) {
-      let last = null,
-        pen = false,
-        d = "",
-        previousSession = null;
+    for (const s of curves) {
+      const ink = curveAppearance(s.run, s.session, series);
+      let pen = false,
+        d = "";
+      // This is a line interpolation from the parent, not another observation:
+      // it must not enter tooltip lookup, point counts or raw statistics.
+      if (s.smoothingAnchor && s.displayPoints[0]?.y !== null) {
+        d = `M${X(s.smoothingAnchor.x).toFixed(2)},${Y(s.smoothingAnchor.y).toFixed(2)} `;
+        pen = true;
+      }
       const plotted = [];
-      const sessions = runSessions(s.run);
       function flush() {
         if (!d) return;
-        node("path", {
+        const path = node("path", {
           d,
           fill: "none",
-          stroke: color(s.run.uid),
-          "stroke-width": 2,
+          stroke: ink.color,
+          "stroke-width": latestView ? 2 : 1.7,
           "stroke-linejoin": "round",
           "stroke-linecap": "round",
           class: "metric-line",
+          "data-session": s.continuous
+            ? "trajectory"
+            : s.session?.id || "unknown",
+          "data-run": s.run.uid,
+          "data-inherited-smoothing": String(!!s.smoothingAnchor),
           "clip-path": `url(#${clipID})`,
-          "stroke-dasharray":
-            previousSession && previousSession.index % 2 ? "6 3" : "none",
+          "stroke-dasharray": ink.dash,
+        });
+        curveNodes.push({
+          node: path,
+          run: s.run.uid,
+          session: s.session?.id || "unknown",
         });
         d = "";
       }
-      for (let index = 0; index < s.points.length; index++) {
-        const [x, y] = s.points[index];
-        if (y === null || (logarithmic && y <= 0)) {
+      for (const point of s.displayPoints) {
+        const { x, y } = point;
+        if (y === null) {
           pen = false;
-          last = null;
           continue;
         }
-        let sy = last === null ? y : last * smoothing + y * (1 - smoothing);
-        last = sy;
-        const session = sessionForPoint(s.run, s.timestamps?.[index], sessions);
-        if (session?.label !== previousSession?.label && pen) {
-          flush();
-          const before = plotted[plotted.length - 1];
-          d = `M${X(before.x).toFixed(2)},${Y(before.y).toFixed(2)} `;
-        }
-        previousSession = session;
-        d += `${pen ? "L" : "M"}${X(x).toFixed(2)},${Y(sy).toFixed(2)} `;
+        d += `${pen ? "L" : "M"}${X(x).toFixed(2)},${Y(y).toFixed(2)} `;
         pen = true;
-        plotted.push({ x, y: sy, raw: y, session });
+        plotted.push(point);
       }
       flush();
-      drawn.push({ run: s.run, points: plotted });
+      drawn.push({ run: s.run, points: plotted, ink });
       const endpoint = plotted.at(-1);
       const endpointVisible =
         endpoint &&
@@ -930,36 +1117,52 @@ function chart(key, series, axis, expanded = false) {
         endpoint.x <= xmax &&
         transform(endpoint.y) >= ymin &&
         transform(endpoint.y) <= ymax;
-      if (endpointVisible)
-        node("circle", {
+      if (endpointVisible) {
+        const endpointNode = node("circle", {
           cx: X(endpoint.x),
           cy: Y(endpoint.y),
           r: 3.5,
           stroke: "white",
           "stroke-width": 1.5,
           class: "latest-point",
-          fill: color(s.run.uid),
+          fill: ink.color,
         });
-      if (endpointVisible && series.indexOf(s) < 2)
-        node(
+        curveNodes.push({
+          node: endpointNode,
+          run: s.run.uid,
+          session: s.session?.id || "unknown",
+        });
+      }
+      const runIndex = series.findIndex(
+        (runSeries) => runSeries.run.uid === s.run.uid,
+      );
+      if (
+        endpointVisible &&
+        runIndex < 2 &&
+        s.points.at(-1)?.[0] === series[runIndex].points.at(-1)?.[0]
+      ) {
+        const labelNode = node(
           "text",
           {
             x: X(endpoint.x) - 7,
             y: Math.max(
               pad.t + 12,
-              Math.min(
-                h - pad.b - 4,
-                Y(endpoint.y) + (series.indexOf(s) ? 14 : -8),
-              ),
+              Math.min(h - pad.b - 4, Y(endpoint.y) + (runIndex ? 14 : -8)),
             ),
             "text-anchor": "end",
-            fill: color(s.run.uid),
+            fill: ink.color,
             "font-size": 10,
             class: "endpoint-label",
             "clip-path": `url(#${clipID})`,
           },
           format(endpoint.y),
         );
+        curveNodes.push({
+          node: labelNode,
+          run: s.run.uid,
+          session: s.session?.id || "unknown",
+        });
+      }
     }
     svg.style.touchAction = "none";
     svg.setAttribute("tabindex", "0");
@@ -968,11 +1171,21 @@ function chart(key, series, axis, expanded = false) {
       `${key} by ${axis}. Drag a rectangle to zoom. Use plus, minus, or zero keys to zoom and reset.`,
     );
     for (const s of series) {
-      const item = el("span", undefined, "legend-item"),
+      const item = el(latestView ? "span" : "button", undefined, "legend-item"),
         line = el("i", undefined, "legend-line");
-      line.style.background = color(s.run.uid);
+      const ink = curveAppearance(s.run, null, series);
+      line.style.background = latestView ? color(s.run.uid) : "transparent";
+      if (!latestView) {
+        line.style.backgroundImage = `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="${ns}" width="36" height="8"><path d="M0 4H36" stroke="#425466" stroke-width="2" stroke-dasharray="${ink.dash}"/></svg>`)}")`;
+        focusButton(item, { run: s.run.uid, session: null });
+      }
       item.title = s.run.display_name;
-      item.append(line, document.createTextNode(s.run.display_name));
+      item.append(
+        line,
+        document.createTextNode(
+          `${latestView ? "" : ink.runLabel + " · "}${s.run.display_name}`,
+        ),
+      );
       legend.append(item);
     }
     const guide = node("line", {
@@ -987,7 +1200,7 @@ function chart(key, series, axis, expanded = false) {
     const markers = drawn.map((s) =>
       node("circle", {
         r: 5,
-        fill: color(s.run.uid),
+        fill: s.ink.color,
         stroke: "white",
         "stroke-width": 2,
         visibility: "hidden",
@@ -1097,7 +1310,9 @@ function chart(key, series, axis, expanded = false) {
           best.x >= xmin &&
           best.x <= xmax &&
           transform(best.y) >= ymin &&
-          transform(best.y) <= ymax
+          transform(best.y) <= ymax &&
+          x >= s.points[0].x - (xmax - xmin) * 0.005 &&
+          x <= s.points.at(-1).x + (xmax - xmin) * 0.005
         ) {
           const marker = markers[index];
           marker.setAttribute("cx", X(best.x));
@@ -1105,12 +1320,16 @@ function chart(key, series, axis, expanded = false) {
           marker.setAttribute("visibility", "visible");
           marker.dataset.x = best.x;
           marker.dataset.value = best.y;
-          text.push(
-            `${s.run.display_name}${best.session ? " · " + best.session.label : ""}\n${axis}: ${format(best.x)} · ${smoothing ? "smoothed" : "value"}: ${format(best.y)}${smoothing ? " · raw: " + format(best.raw) : ""}`,
+          const entry = el(
+            "div",
+            `${latestView ? "" : s.ink.runLabel + " · "}${s.run.display_name}${best.session ? " · " + best.session.label : ""}\n${axis}: ${format(best.x)} · ${smoothing ? "smoothed" : "value"}: ${format(best.y)}${smoothing ? " · raw: " + format(best.raw) : ""}${Number.isFinite(best.timestamp) ? "\n" + new Date(best.timestamp * 1000).toLocaleString() : ""}`,
+            "session-tooltip-entry",
           );
+          entry.style.borderLeftColor = s.ink.color;
+          text.push(entry);
         }
       }
-      tooltip.textContent = text.join("\n");
+      tooltip.replaceChildren(...text);
       tooltip.hidden = !text.length;
       tooltip.style.left = `${Math.max(0, Math.min(e.clientX - card.getBoundingClientRect().left + 12, card.clientWidth - 220))}px`;
       tooltip.style.top = `${e.clientY - card.getBoundingClientRect().top + 12}px`;
@@ -1120,6 +1339,7 @@ function chart(key, series, axis, expanded = false) {
       guide.setAttribute("visibility", "hidden");
       markers.forEach((marker) => marker.setAttribute("visibility", "hidden"));
     };
+    emphasize();
     if (restoreFocus) svg.focus({ preventScroll: true });
   }
   draw();

@@ -94,6 +94,113 @@ h1 {
   min-width: 0;
   max-width: min(260px, 55vw);
 }
+.compare-bar > div {
+  flex-wrap: wrap;
+}
+.trajectory-note {
+  line-height: 1.45;
+  margin: 5px 0 8px;
+}
+.plot-view-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 11px;
+}
+.plot-view-label select {
+  max-width: 100%;
+  font-size: 11px;
+  padding: 5px 7px;
+}
+.session-legend {
+  margin-top: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.session-legend > summary {
+  cursor: pointer;
+  font-size: 10px;
+  color: #50695e;
+}
+.session-legend-body {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 0;
+}
+.session-legend-body > p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.session-legend-run {
+  padding: 7px 0;
+}
+.session-run-focus {
+  font-size: 10px;
+  text-align: left;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 7px;
+  border-color: transparent;
+}
+.session-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.session-chip {
+  color: var(--session-ink);
+  border-color: var(--session-ink);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font:
+    10px ui-monospace,
+    monospace;
+  background: white;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.session-chip::before {
+  content: "";
+  display: inline-block;
+  background: var(--session-ink);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.session-chip[aria-pressed="true"],
+.session-run-focus[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px currentColor;
+  background: #f0f5f2;
+}
+.session-focus-reset {
+  padding: 4px 8px;
+  font-size: 10px;
+}
+body[data-density="compact"] .all-session-run-legend {
+  display: flex;
+}
+.all-session-run-legend .legend-item {
+  font-size: 10px;
+  padding: 4px 6px;
+  max-width: 100%;
+  text-align: left;
+}
+.all-session-run-legend .legend-item[aria-pressed="true"] {
+  border-color: #50695e;
+}
+.all-session-run-legend .legend-line {
+  height: 8px;
+  width: 36px;
+  flex: none;
+}
+.session-tooltip-entry {
+  border-left: 3px solid;
+  padding-left: 7px;
+  margin: 5px 0;
+}
 .metric-toolbar {
   margin: 8px 0;
 }

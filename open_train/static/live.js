@@ -114,6 +114,7 @@ async function refreshOpenPlots() {
             keys: requestedKeys,
             x: axis,
             limit: 800,
+            view: $("#session-view").value,
           }),
         });
         if (!valid()) return;
